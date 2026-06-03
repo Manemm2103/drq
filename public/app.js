@@ -22,7 +22,7 @@ let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
 let callDebugEnabled = false;
-let runtimeVersionLabel = 'Version 2026-06-03.7';
+let runtimeVersionLabel = 'Version 2026-06-03.8';
 
 const soundUhOh = document.getElementById('sound-uhoh');
 const soundRing = document.getElementById('sound-ring');
@@ -563,7 +563,7 @@ function renderUserList() {
             <div class="contact-status-mini ${user.status}"></div>
             <div class="contact-info">
                 <div class="contact-name">${user.username}</div>
-                <div class="contact-uin">ICQ#: ${user.uin} ${statusMsg}</div>
+                <div class="contact-uin">DRQ#: ${user.uin} ${statusMsg}</div>
             </div>
             ${badgeHtml}
         `;

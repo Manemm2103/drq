@@ -1,20 +1,20 @@
 {
-  "name": "ICQ Modern",
-  "short_name": "ICQ",
+  "name": "DRQ",
+  "short_name": "DRQ",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#dcdcdc",
   "theme_color": "#dcdcdc",
   "icons": [
     {
-      "src": "/icon.png",
-      "sizes": "192x192",
-      "type": "image/png"
+      "src": "/drq-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
     },
     {
-      "src": "/icon.png",
-      "sizes": "512x512",
-      "type": "image/png"
+      "src": "/drq-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
     }
   ]
 }

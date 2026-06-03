@@ -58,7 +58,7 @@ function loadVapidKeys() {
 }
 
 const vapidKeys = loadVapidKeys();
-webpush.setVapidDetails('mailto:hello@icq-modern.com', vapidKeys.publicKey, vapidKeys.privateKey);
+webpush.setVapidDetails('mailto:hello@drq-app.com', vapidKeys.publicKey, vapidKeys.privateKey);
 
 function buildRtcIceServers() {
     const iceServers = [
@@ -104,7 +104,7 @@ function sendPushToUser(userId, payload) {
             const sub = JSON.parse(subRow.subscription);
             webpush.sendNotification(sub, JSON.stringify(payload), {
                 vapidDetails: {
-                    subject: 'mailto:hello@icq-modern.com',
+                    subject: 'mailto:hello@drq-app.com',
                     publicKey: vapidKeys.publicKey,
                     privateKey: vapidKeys.privateKey
                 }
@@ -318,7 +318,7 @@ app.delete('/api/call-debug', (req, res) => {
 
 app.get('/api/runtime-config', (req, res) => {
     res.json({
-        version: 'Version 2026-06-03.7',
+        version: 'Version 2026-06-03.8',
         rtcConfig: {
             iceServers: buildRtcIceServers()
         }
@@ -715,7 +715,7 @@ io.on('connection', (socket) => {
         const payload = {
             title: `Neue Nachricht von ${senderName}`,
             body: type === 'text' ? content : 'Neue Mediendatei empfangen',
-            icon: '/icq-logo.png',
+            icon: '/drq-logo.svg',
             tag: `message-${senderId}`,
             data: { type: 'message', senderId }
         };
@@ -736,8 +736,8 @@ io.on('connection', (socket) => {
         const callerName = caller ? caller.username : 'Unbekannt';
         sendPushToUser(data.userToCall, {
             title: data.video ? `Eingehender Videoanruf von ${callerName}` : `Eingehender Sprachanruf von ${callerName}`,
-            body: 'Tippe, um ICQ zu oeffnen.',
-            icon: '/icon.png',
+            body: 'Tippe, um DRQ zu oeffnen.',
+            icon: '/drq-logo.svg',
             tag: `incoming-call-${data.from}`,
             requireInteraction: true,
             data: {

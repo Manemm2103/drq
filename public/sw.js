@@ -13,7 +13,7 @@ self.addEventListener('push', e => {
     
     self.registration.showNotification(data.title, {
         body: data.body,
-        icon: data.icon || '/icon.png',
+        icon: data.icon || '/drq-logo.svg',
         vibrate: [200, 100, 200, 100, 200, 100, 200],
         tag: data.tag,
         requireInteraction: !!data.requireInteraction,

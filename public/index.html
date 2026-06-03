@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ICQ Modern</title>
+    <title>DRQ</title>
     <link rel="stylesheet" href="style.css?v=39">
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
@@ -11,25 +11,18 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#dcdcdc">
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-    <link rel="icon" type="image/png" href="/icon.png">
+    <link rel="apple-touch-icon" href="/drq-logo.svg">
+    <link rel="icon" type="image/svg+xml" href="/drq-logo.svg">
 </head>
 <body>
 
     <!-- Login -->
     <div id="login-screen" class="screen active">
         <div class="login-box">
-            <div class="flower-logo">
-                <span class="petal p1"></span>
-                <span class="petal p2"></span>
-                <span class="petal p3"></span>
-                <span class="petal p4"></span>
-                <span class="petal p5"></span>
-                <span class="petal p6"></span>
-                <div class="center"></div>
-            </div>
-            <h1>ICQ Modern</h1>
-            <input type="text" id="username" placeholder="ICQ Nummer / Benutzername" autocapitalize="off" autocorrect="off" autocomplete="username" spellcheck="false">
+            <img class="brand-logo" src="/drq-logo.svg" alt="DRQ Logo">
+            <h1>DRQ</h1>
+            <p class="brand-tagline">D-R-Q There ask you</p>
+            <input type="text" id="username" placeholder="DRQ Nummer / Benutzername" autocapitalize="off" autocorrect="off" autocomplete="username" spellcheck="false">
             <input type="password" id="password" placeholder="Passwort" autocapitalize="off" autocorrect="off" autocomplete="current-password" spellcheck="false">
             <button onclick="login()">Anmelden</button>
             <p class="error-msg" id="login-error"></p>
@@ -56,7 +49,7 @@
             <div class="contact-list" id="contact-list">
                 <!-- Contacts -->
             </div>
-            <div class="build-version sidebar-footer-version" id="build-version-sidebar">Version 2026-06-03.7</div>
+            <div class="build-version sidebar-footer-version" id="build-version-sidebar">Version 2026-06-03.8</div>
         </div>
 
         <div class="chat-area" id="chat-area">
@@ -253,7 +246,7 @@
 
             <div class="profile-section">
                 <label>Benutzerdaten</label>
-                <input type="text" id="edit-uin" disabled title="ICQ Nummer">
+                <input type="text" id="edit-uin" disabled title="DRQ Nummer">
                 <input type="text" id="edit-username" placeholder="Benutzername">
                 <input type="password" id="edit-password" placeholder="Neues Passwort (optional)">
             </div>
@@ -280,7 +273,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
-    <script src="bg-script.js?v=4"></script>
-    <script src="app.js?v=46"></script>
+    <script src="bg-script.js?v=5"></script>
+    <script src="app.js?v=47"></script>
 </body>
 </html>

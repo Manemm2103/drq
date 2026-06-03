@@ -1,7 +1,7 @@
 {
-  "name": "icq-modern",
+  "name": "drq",
   "version": "1.0.0",
-  "description": "ICQ Modern chat application",
+  "description": "DRQ chat application",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
