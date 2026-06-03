@@ -120,6 +120,7 @@ db.exec(`
         receiver_id INTEGER,
         content TEXT,
         type TEXT DEFAULT 'text',
+        is_read INTEGER DEFAULT 0,
         is_encrypted INTEGER DEFAULT 0, -- New: Flag for E2EE
         filename TEXT,
         reply_to_id INTEGER, -- New: ID of message being replied to
@@ -142,6 +143,10 @@ try {
     }
     
     const msgCols = db.prepare("PRAGMA table_info(messages)").all();
+    if (!msgCols.some(c => c.name === 'is_read')) {
+        db.prepare("ALTER TABLE messages ADD COLUMN is_read INTEGER DEFAULT 0").run();
+        console.log("Migration: Added is_read to messages");
+    }
     if (!msgCols.some(c => c.name === 'reply_to_id')) {
         db.prepare("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER").run();
         console.log("Migration: Added reply_to_id to messages");
