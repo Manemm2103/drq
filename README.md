@@ -1,4 +1,4 @@
-# ICQ Modern
+# DRQ Modern
 
 Container-ready package for Git and Portainer deployment, including an optional built-in `coturn` service for WebRTC calls.
 
