@@ -328,34 +328,75 @@ async function loadUsers() {
             const li = document.createElement('li');
             li.style.display = 'flex';
             li.style.justifyContent = 'space-between';
-            li.style.alignItems = 'center';
-            li.style.padding = '5px';
+            li.style.alignItems = 'flex-start';
+            li.style.padding = '8px 5px';
             li.style.borderBottom = '1px solid #eee';
+            li.style.gap = '12px';
 
-            const info = document.createElement('span');
-            info.innerHTML = `<b>${user.username}</b> (UIN: ${user.uin}) - ${user.role}`;
+            const info = document.createElement('div');
+            info.style.flex = '1';
+            info.innerHTML = `<b>${user.username}</b> (UIN: ${user.uin})`;
+
+            const meta = document.createElement('div');
+            meta.style.fontSize = '0.85rem';
+            meta.style.color = '#666';
+            meta.style.marginTop = '4px';
+            meta.textContent = `Rolle: ${user.role}`;
+            info.appendChild(meta);
             
             const controls = document.createElement('div');
+            controls.style.display = 'flex';
+            controls.style.flexDirection = 'column';
+            controls.style.alignItems = 'flex-end';
+            controls.style.gap = '6px';
+
+            const topRow = document.createElement('div');
+            topRow.style.display = 'flex';
+            topRow.style.alignItems = 'center';
+            topRow.style.gap = '8px';
             
-            // Chat Toggle
             const label = document.createElement('label');
-            label.style.marginRight = '10px';
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
-            checkbox.checked = user.can_chat !== 0; // Default true (1)
+            checkbox.checked = user.can_chat !== 0;
             checkbox.onchange = () => toggleChat(user.id, checkbox.checked);
-            
             label.appendChild(checkbox);
             label.appendChild(document.createTextNode(' Chat'));
-            controls.appendChild(label);
+            topRow.appendChild(label);
 
-            if (user.role !== 'admin') {
+            const roleSelect = document.createElement('select');
+            roleSelect.innerHTML = '<option value="user">User</option><option value="admin">Admin</option>';
+            roleSelect.value = user.role || 'user';
+            roleSelect.onchange = () => updateUserRole(user.id, roleSelect.value);
+            topRow.appendChild(roleSelect);
+
+            controls.appendChild(topRow);
+
+            const passwordRow = document.createElement('div');
+            passwordRow.style.display = 'flex';
+            passwordRow.style.alignItems = 'center';
+            passwordRow.style.gap = '6px';
+
+            const passwordInput = document.createElement('input');
+            passwordInput.type = 'password';
+            passwordInput.placeholder = 'Neues Passwort';
+            passwordInput.style.width = '140px';
+            passwordRow.appendChild(passwordInput);
+
+            const savePasswordBtn = document.createElement('button');
+            savePasswordBtn.innerText = 'Passwort';
+            savePasswordBtn.onclick = () => updateUserPassword(user.id, passwordInput);
+            passwordRow.appendChild(savePasswordBtn);
+
+            controls.appendChild(passwordRow);
+
+            if (!(user.role === 'admin' && user.id === currentUser.id)) {
                 const delBtn = document.createElement('button');
                 delBtn.innerText = '🗑';
                 delBtn.style.background = 'red';
                 delBtn.style.color = 'white';
                 delBtn.style.border = 'none';
-                delBtn.style.padding = '5px';
+                delBtn.style.padding = '5px 8px';
                 delBtn.style.cursor = 'pointer';
                 delBtn.onclick = () => deleteUser(user.id);
                 controls.appendChild(delBtn);
@@ -401,9 +442,41 @@ async function createUser() {
     }
 }
 
+async function updateUserRole(id, role) {
+    try {
+        await axios.put(`/api/admin/users/${id}/role`, {
+            requesterId: currentUser.id,
+            role
+        });
+        loadUsers();
+    } catch (err) {
+        alert(err.response?.data?.message || "Fehler beim Ändern der Rolle!");
+        loadUsers();
+    }
+}
+
+async function updateUserPassword(id, passwordInput) {
+    const password = passwordInput.value;
+    if (!password) {
+        alert("Bitte ein neues Passwort eingeben!");
+        return;
+    }
+
+    try {
+        await axios.put(`/api/admin/users/${id}/password`, {
+            requesterId: currentUser.id,
+            password
+        });
+        passwordInput.value = '';
+        alert("Passwort geändert!");
+    } catch (err) {
+        alert(err.response?.data?.message || "Fehler beim Ändern des Passworts!");
+    }
+}
+
 async function deleteUser(id) {
     if (!confirm("Benutzer wirklich löschen?")) return;
-    await axios.delete(`/api/admin/users/${id}`);
+    await axios.delete(`/api/admin/users/${id}`, { data: { requesterId: currentUser.id } });
     loadUsers();
 }
 

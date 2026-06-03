@@ -417,11 +417,90 @@ app.post('/api/admin/users', (req, res) => {
     }
 });
 
+// Admin: Update User Role
+app.put('/api/admin/users/:id/role', (req, res) => {
+    const { id } = req.params;
+    const { requesterId, role } = req.body;
+
+    if (!['user', 'admin'].includes(role)) {
+        return res.status(400).json({ success: false, message: 'Ungültige Rolle!' });
+    }
+
+    const requester = db.prepare('SELECT id, role FROM users WHERE id = ?').get(requesterId);
+    if (!requester || requester.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Nur Admins dürfen das!' });
+    }
+
+    const target = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id);
+    if (!target) {
+        return res.status(404).json({ success: false, message: 'Benutzer nicht gefunden!' });
+    }
+
+    if (Number(target.id) === Number(requester.id) && role !== 'admin') {
+        return res.status(400).json({ success: false, message: 'Du kannst dir die Admin-Rechte nicht selbst entziehen!' });
+    }
+
+    if (target.role === 'admin' && role !== 'admin') {
+        const adminCount = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get();
+        if (adminCount && adminCount.count <= 1) {
+            return res.status(400).json({ success: false, message: 'Es muss mindestens einen Admin geben!' });
+        }
+    }
+
+    db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
+    res.json({ success: true });
+});
+
+// Admin: Update User Password
+app.put('/api/admin/users/:id/password', (req, res) => {
+    const { id } = req.params;
+    const { requesterId, password } = req.body;
+
+    const requester = db.prepare('SELECT role FROM users WHERE id = ?').get(requesterId);
+    if (!requester || requester.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Nur Admins dürfen das!' });
+    }
+
+    if (!password || password.length < 1) {
+        return res.status(400).json({ success: false, message: 'Bitte ein Passwort angeben!' });
+    }
+
+    const target = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+    if (!target) {
+        return res.status(404).json({ success: false, message: 'Benutzer nicht gefunden!' });
+    }
+
+    const hash = bcrypt.hashSync(password, 10);
+    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hash, id);
+    res.json({ success: true });
+});
+
 // Admin: Delete User
 app.delete('/api/admin/users/:id', (req, res) => {
-    // In real app verify requester is admin here too!
     const { id } = req.params;
-    if (id == 1) return res.status(400).json({ success: false, message: "Admin kann nicht gelöscht werden!" });
+    const { requesterId } = req.body || {};
+
+    const requester = db.prepare('SELECT id, role FROM users WHERE id = ?').get(requesterId);
+    if (!requester || requester.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Nur Admins dürfen das!' });
+    }
+
+    const target = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id);
+    if (!target) {
+        return res.status(404).json({ success: false, message: 'Benutzer nicht gefunden!' });
+    }
+
+    if (Number(target.id) === Number(requester.id)) {
+        return res.status(400).json({ success: false, message: 'Du kannst dich nicht selbst löschen!' });
+    }
+
+    if (target.role === 'admin') {
+        const adminCount = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get();
+        if (adminCount && adminCount.count <= 1) {
+            return res.status(400).json({ success: false, message: 'Der letzte Admin kann nicht gelöscht werden!' });
+        }
+    }
+
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
     res.json({ success: true });
 });
