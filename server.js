@@ -221,11 +221,13 @@ app.delete('/api/call-debug', (req, res) => {
 
 // Login
 app.post('/api/login', (req, res) => {
-    const { username, password } = req.body;
+    const rawUsername = typeof req.body?.username === 'string' ? req.body.username : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const username = rawUsername.trim();
     // Allow login by Username OR UIN
     let user;
     if (/^\d+$/.test(username)) { // If input is numeric, check UIN first
-         user = db.prepare('SELECT * FROM users WHERE uin = ?').get(parseInt(username));
+         user = db.prepare('SELECT * FROM users WHERE uin = ?').get(parseInt(username, 10));
     }
     if (!user) { // Otherwise username
          user = db.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').get(username);
