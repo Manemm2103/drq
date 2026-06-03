@@ -22,7 +22,7 @@ let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
 let callDebugEnabled = false;
-let runtimeVersionLabel = 'Version 2026-06-03.2';
+let runtimeVersionLabel = 'Version 2026-06-03.3';
 
 const soundUhOh = document.getElementById('sound-uhoh');
 const soundRing = document.getElementById('sound-ring');
@@ -1727,4 +1727,3 @@ function hideTypingIndicator() {
         indicator.style.display = 'none';
     }
 }
-
