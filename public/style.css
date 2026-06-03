@@ -1167,19 +1167,15 @@ input:checked + .slider:before { transform: translateX(20px); }
     letter-spacing: 0.02em;
 }
 
-.login-version {
-    margin-top: 0.9rem;
-}
-
-.sidebar-version {
-    margin-left: auto;
-    align-self: center;
-    padding-left: 10px;
-    white-space: nowrap;
+.sidebar-footer-version {
+    padding: 10px 14px 12px;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    background: rgba(255, 255, 255, 0.35);
+    text-align: center;
 }
 
 @media (max-width: 768px) {
-    .sidebar-version {
-        display: none;
+    .sidebar-footer-version {
+        padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     }
 }

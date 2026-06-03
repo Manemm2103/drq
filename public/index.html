@@ -33,7 +33,6 @@
             <input type="password" id="password" placeholder="Passwort" autocapitalize="off" autocorrect="off" autocomplete="current-password" spellcheck="false">
             <button onclick="login()">Anmelden</button>
             <p class="error-msg" id="login-error"></p>
-            <div class="build-version login-version" id="build-version-login">Build 2026-06-03 23:15</div>
         </div>
     </div>
 
@@ -50,7 +49,6 @@
                 <button id="enable-push-btn" onclick="requestPushPermission()" class="icon-btn" title="Push aktivieren" style="display:inline-block;">🔔</button>
                         <button id="admin-btn" onclick="openAdmin()" class="icon-btn" style="margin-left: 10px; font-size: 1.5rem; display:none;" title="Admin Panel">⚙️</button>
                 <button onclick="logout()" class="icon-btn logout-btn" title="Abmelden">🚪</button>
-                <div class="build-version sidebar-version" id="build-version-sidebar">Build 2026-06-03 23:15</div>
             </div>
             <div class="search-bar">
                 <input type="text" placeholder="Suchen..." oninput="filterContacts(this.value)">
@@ -58,6 +56,7 @@
             <div class="contact-list" id="contact-list">
                 <!-- Contacts -->
             </div>
+            <div class="build-version sidebar-footer-version" id="build-version-sidebar">Version 2026-06-03.1</div>
         </div>
 
         <div class="chat-area" id="chat-area">
@@ -275,6 +274,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
     <script src="bg-script.js"></script>
-    <script src="app.js?v=41"></script>
+    <script src="app.js?v=42"></script>
 </body>
 </html>
