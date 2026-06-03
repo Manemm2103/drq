@@ -75,6 +75,26 @@ function writeCallDebugLog(entry) {
     });
 }
 
+function normalizeUsernameInput(value) {
+    const normalized = typeof value === 'string'
+        ? value.normalize('NFKC').replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, ' ').trim()
+        : '';
+
+    return /^\d+$/.test(normalized.replace(/\s+/g, '')) ? normalized.replace(/\s+/g, '') : normalized;
+}
+
+function logFailedLogin(rawUsername, normalizedUsername, password) {
+    const debug = {
+        rawUsername,
+        normalizedUsername,
+        rawLength: rawUsername.length,
+        normalizedLength: normalizedUsername.length,
+        rawCodePoints: Array.from(rawUsername).map(ch => ch.codePointAt(0)),
+        passwordLength: password.length
+    };
+    console.warn('Login failed debug:', JSON.stringify(debug));
+}
+
 // Multer storage config
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
@@ -223,7 +243,7 @@ app.delete('/api/call-debug', (req, res) => {
 app.post('/api/login', (req, res) => {
     const rawUsername = typeof req.body?.username === 'string' ? req.body.username : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const username = rawUsername.trim();
+    const username = normalizeUsernameInput(rawUsername);
     // Allow login by Username OR UIN
     let user;
     if (/^\d+$/.test(username)) { // If input is numeric, check UIN first
@@ -247,6 +267,7 @@ app.post('/api/login', (req, res) => {
             } 
         });
     } else {
+        logFailedLogin(rawUsername, username, password);
         res.status(401).json({ success: false, message: 'Falsche Zugangsdaten!' });
     }
 });
