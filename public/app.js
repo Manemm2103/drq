@@ -22,7 +22,7 @@ let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
 let callDebugEnabled = false;
-let runtimeVersionLabel = 'Version 2026-06-03.3';
+let runtimeVersionLabel = 'Version 2026-06-03.4';
 
 const soundUhOh = document.getElementById('sound-uhoh');
 const soundRing = document.getElementById('sound-ring');
@@ -1027,6 +1027,9 @@ const incomingCallModal = document.getElementById('incoming-call-modal');
 const callerNameSpan = document.getElementById('caller-name');
 const callVideoBtn = document.getElementById('call-video-btn');
 const callAudioBtn = document.getElementById('call-audio-btn');
+const callPartnerNameEl = document.getElementById('call-partner-name');
+const callPartnerStatusEl = document.getElementById('call-partner-status');
+const switchCameraBtn = document.getElementById('switch-camera-btn');
 
 let localStream = null;
 let peerConnection = null;
@@ -1034,6 +1037,40 @@ let incomingCallData = null;
 let activeCallPartnerId = null;
 let remoteStream = null;
 let pendingIceCandidates = [];
+let currentFacingMode = 'user';
+let activeCallHasVideo = false;
+let isSwitchingCamera = false;
+
+function getCallConstraints(wantVideo) {
+    return {
+        audio: true,
+        video: wantVideo ? {
+            facingMode: { ideal: currentFacingMode },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+        } : false
+    };
+}
+
+function updateCallOverlayMeta(name, statusText) {
+    if (callPartnerNameEl && name !== undefined && name !== null) callPartnerNameEl.textContent = name;
+    if (callPartnerStatusEl && statusText !== undefined && statusText !== null) callPartnerStatusEl.textContent = statusText;
+}
+
+function resetFloatingPreviewPosition() {
+    if (!localVideo) return;
+    localVideo.style.left = '';
+    localVideo.style.top = '';
+    localVideo.style.right = '';
+    localVideo.style.bottom = '';
+}
+
+function updateCallControls() {
+    if (!switchCameraBtn) return;
+    switchCameraBtn.style.display = activeCallHasVideo ? 'flex' : 'none';
+    switchCameraBtn.disabled = isSwitchingCamera;
+    switchCameraBtn.style.opacity = isSwitchingCamera ? '0.6' : '1';
+}
 
 // STUN servers (Google's public ones are reliable enough for testing)
 let rtcConfig = {
@@ -1061,13 +1098,18 @@ async function startCall(video = true) {
         return;
     }
     try {
+        activeCallHasVideo = !!video;
+        currentFacingMode = 'user';
+        resetFloatingPreviewPosition();
+        updateCallOverlayMeta(currentChatPartner.username, video ? 'Videoanruf wird aufgebaut...' : 'Sprachanruf wird aufgebaut...');
+        updateCallControls();
         console.log(`Requesting media access (video=${video})...`);
         await callDebugLog('start_call_requested', {
             wantVideo: video,
             partnerId: currentChatPartner.id,
             userAgent: navigator.userAgent
         });
-        localStream = await navigator.mediaDevices.getUserMedia({ video: video, audio: true });
+        localStream = await navigator.mediaDevices.getUserMedia(getCallConstraints(video));
         console.log("Media access granted.");
         await callDebugLog('local_stream_ready', summarizeStream(localStream));
         
@@ -1140,11 +1182,17 @@ async function acceptCall() {
     // For simplicity, we match: if they call audio-only, we answer audio-only.
     // If they call video, we try video too.
     const wantVideo = incomingCallData.video !== false; 
+    activeCallHasVideo = wantVideo;
+    currentFacingMode = 'user';
+    resetFloatingPreviewPosition();
+    const caller = allUsersCache.find(u => u.id === incomingCallData.from);
+    updateCallOverlayMeta(caller ? caller.username : 'Unbekannt', wantVideo ? 'Videoanruf wird verbunden...' : 'Sprachanruf wird verbunden...');
+    updateCallControls();
 
     try {
         console.log(`Accepting call, requesting media (video=${wantVideo})...`);
         await callDebugLog('accept_call_requested', { wantVideo, from: incomingCallData ? incomingCallData.from : null });
-        localStream = await navigator.mediaDevices.getUserMedia({ video: wantVideo, audio: true });
+        localStream = await navigator.mediaDevices.getUserMedia(getCallConstraints(wantVideo));
         await callDebugLog('accept_call_local_stream_ready', summarizeStream(localStream));
         
         if (wantVideo) {
@@ -1211,6 +1259,7 @@ socket.on('call_accepted', async (signal) => {
     await callDebugLog('call_accepted', { type: signal ? signal.type : null });
     if (peerConnection) {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+        updateCallOverlayMeta(currentChatPartner ? currentChatPartner.username : 'Anruf', activeCallHasVideo ? 'Verbunden' : 'Sprachverbindung aktiv');
         await callDebugLog('remote_description_set', { side: 'caller', type: signal ? signal.type : null });
         await flushPendingIceCandidates();
     }
@@ -1264,6 +1313,10 @@ function endCall(isRemote = false) {
     callDebugLog('end_call', { isRemote });
     if (typeof stopSegmentation === 'function') { stopSegmentation(); }
     pendingIceCandidates = [];
+    activeCallHasVideo = false;
+    isSwitchingCamera = false;
+    updateCallOverlayMeta('Anruf', isRemote ? 'Anruf beendet' : 'Verbindung getrennt');
+    updateCallControls();
     if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
@@ -1279,6 +1332,7 @@ function endCall(isRemote = false) {
     localVideo.srcObject = null;
     remoteVideo.srcObject = null;
     remoteStream = null;
+    resetFloatingPreviewPosition();
 
     if (!isRemote) {
         // Notify other side if *I* hung up
@@ -1318,6 +1372,11 @@ function createPeerConnection() {
 
     peerConnection.oniceconnectionstatechange = () => {
         callDebugLog('ice_connection_state', { state: peerConnection.iceConnectionState });
+        const state = peerConnection.iceConnectionState;
+        if (state === 'checking') updateCallOverlayMeta(null, 'Netzwerk wird verbunden...');
+        if (state === 'connected' || state === 'completed') updateCallOverlayMeta(null, activeCallHasVideo ? 'Verbunden' : 'Sprachverbindung aktiv');
+        if (state === 'failed') updateCallOverlayMeta(null, 'Verbindung fehlgeschlagen');
+        if (state === 'disconnected') updateCallOverlayMeta(null, 'Verbindung unterbrochen');
     };
     peerConnection.onconnectionstatechange = () => {
         callDebugLog('connection_state', { state: peerConnection.connectionState });
@@ -1354,6 +1413,7 @@ function createPeerConnection() {
                 videoWidth: remoteVideo.videoWidth,
                 videoHeight: remoteVideo.videoHeight
             });
+            updateCallOverlayMeta(null, activeCallHasVideo ? 'Gegenuebervideo aktiv' : 'Sprachverbindung aktiv');
             ensureCallVideoPlayback(remoteVideo, false);
         };
         ensureCallVideoPlayback(remoteVideo, false);
@@ -1367,7 +1427,7 @@ function toggleMute() {
         if (audioTrack) {
             audioTrack.enabled = !audioTrack.enabled;
             document.getElementById('mute-btn').classList.toggle('active', !audioTrack.enabled);
-            document.getElementById('mute-btn').innerHTML = audioTrack.enabled ? '🎤' : '🔇';
+            document.getElementById('mute-btn').innerHTML = audioTrack.enabled ? '🎤<span>Mic</span>' : '🔇<span>Stumm</span>';
         }
     }
 }
@@ -1378,8 +1438,75 @@ function toggleVideo() {
         if (videoTrack) {
             videoTrack.enabled = !videoTrack.enabled;
             document.getElementById('video-btn').classList.toggle('active', !videoTrack.enabled);
-            document.getElementById('video-btn').innerHTML = videoTrack.enabled ? '📷' : '🚫';
+            document.getElementById('video-btn').innerHTML = videoTrack.enabled ? '📷<span>Kamera</span>' : '🚫<span>Kamera aus</span>';
         }
+    }
+}
+
+async function switchCamera() {
+    if (!activeCallHasVideo || !localStream || isSwitchingCamera) return;
+
+    const currentVideoTrack = localStream.getVideoTracks()[0];
+    if (!currentVideoTrack) return;
+
+    isSwitchingCamera = true;
+    updateCallControls();
+    const previousFacingMode = currentFacingMode;
+    const nextFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+    updateCallOverlayMeta(null, nextFacingMode === 'environment' ? 'Rueckkamera wird aktiviert...' : 'Frontkamera wird aktiviert...');
+
+    try {
+        const switchedStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+                facingMode: { exact: nextFacingMode },
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
+        }).catch(async () => navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+                facingMode: { ideal: nextFacingMode },
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
+        }));
+
+        const newVideoTrack = switchedStream.getVideoTracks()[0];
+        if (!newVideoTrack) throw new Error('Kein neuer Videotrack verfuegbar');
+
+        const sender = peerConnection
+            ? peerConnection.getSenders().find((item) => item.track && item.track.kind === 'video')
+            : null;
+
+        if (sender) {
+            await sender.replaceTrack(newVideoTrack);
+        }
+
+        const previousEnabledState = currentVideoTrack.enabled;
+        localStream.removeTrack(currentVideoTrack);
+        currentVideoTrack.stop();
+        newVideoTrack.enabled = previousEnabledState;
+        localStream.addTrack(newVideoTrack);
+        localVideo.srcObject = localStream;
+        ensureCallVideoPlayback(localVideo, true);
+
+        currentFacingMode = nextFacingMode;
+        if (typeof window.bgMode !== 'undefined' && window.bgMode !== 'none' && typeof startSegmentation === 'function') {
+            if (typeof stopSegmentation === 'function') stopSegmentation();
+            startSegmentation();
+        }
+
+        await callDebugLog('camera_switched', { facingMode: currentFacingMode });
+        updateCallOverlayMeta(null, currentFacingMode === 'environment' ? 'Rueckkamera aktiv' : 'Frontkamera aktiv');
+    } catch (err) {
+        currentFacingMode = previousFacingMode;
+        await callDebugLog('camera_switch_error', { name: err.name || 'Error', message: err.message || String(err) });
+        updateCallOverlayMeta(null, 'Kamerwechsel fehlgeschlagen');
+        console.error('Camera switch failed', err);
+    } finally {
+        isSwitchingCamera = false;
+        updateCallControls();
     }
 }
 

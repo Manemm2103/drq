@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>ICQ Modern</title>
-    <link rel="stylesheet" href="style.css?v=38">
+    <link rel="stylesheet" href="style.css?v=39">
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <link rel="manifest" href="/manifest.json">
@@ -56,7 +56,7 @@
             <div class="contact-list" id="contact-list">
                 <!-- Contacts -->
             </div>
-            <div class="build-version sidebar-footer-version" id="build-version-sidebar">Version 2026-06-03.3</div>
+            <div class="build-version sidebar-footer-version" id="build-version-sidebar">Version 2026-06-03.4</div>
         </div>
 
         <div class="chat-area" id="chat-area">
@@ -118,16 +118,23 @@
     <!-- Video Call Overlay -->
     <div id="video-call-overlay" class="overlay" style="display:none;">
         <div class="video-container">
+            <div class="call-topbar">
+                <div class="call-partner-meta">
+                    <span id="call-partner-name" class="call-partner-name">Anruf</span>
+                    <span id="call-partner-status" class="call-partner-status">Verbindung wird aufgebaut...</span>
+                </div>
+            </div>
             <video id="remote-video" autoplay playsinline></video>
             <video id="local-video" autoplay playsinline muted></video>
-            <canvas id="bg-canvas" style="display:none; position:absolute; bottom:20px; right:20px; width:150px; height:100px; border-radius:10px; z-index:10; background:#000; box-shadow:0 5px 15px rgba(0,0,0,0.3);"></canvas>
+            <canvas id="bg-canvas" style="display:none;"></canvas>
             <div class="call-controls">
-                <button onclick="toggleMute()" id="mute-btn" class="control-btn">🎤</button>
-                <button onclick="toggleVideo()" id="video-btn" class="control-btn">📷</button>
-                <button onclick="toggleBgMenu()" id="bg-btn" class="control-btn" title="Hintergrund">🖼️</button>
-                <button onclick="endCall()" class="control-btn hangup-btn">❌</button>
+                <button onclick="toggleMute()" id="mute-btn" class="control-btn" title="Mikrofon">🎤<span>Mic</span></button>
+                <button onclick="toggleVideo()" id="video-btn" class="control-btn" title="Kamera">📷<span>Kamera</span></button>
+                <button onclick="switchCamera()" id="switch-camera-btn" class="control-btn" title="Kamera wechseln">🔄<span>Wechseln</span></button>
+                <button onclick="toggleBgMenu()" id="bg-btn" class="control-btn" title="Hintergrund">🖼️<span>Effekt</span></button>
+                <button onclick="endCall()" class="control-btn hangup-btn" title="Auflegen">❌<span>Beenden</span></button>
             </div>
-            <div id="bg-menu" style="display:none; position:absolute; bottom:80px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.8); padding:10px; border-radius:10px; display:flex; gap:10px; z-index:100;">
+            <div id="bg-menu" class="bg-menu" style="display:none;">
                 <button onclick="setBg('none')">Aus</button>
                 <button onclick="setBg('blur')">Blur</button>
                 <button onclick="setBg('color', '#330867')">Lila</button>
@@ -274,6 +281,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
     <script src="bg-script.js"></script>
-    <script src="app.js?v=44"></script>
+    <script src="app.js?v=45"></script>
 </body>
 </html>
