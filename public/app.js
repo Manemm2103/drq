@@ -22,7 +22,7 @@ let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
 let callDebugEnabled = false;
-let runtimeVersionLabel = 'Version 2026-06-04.2';
+let runtimeVersionLabel = 'Version 2026-06-04.3';
 let currentChatMessages = [];
 let activeSearchTab = 'text';
 
@@ -1177,6 +1177,104 @@ async function logSelectedCandidatePairStats(context = 'stats') {
     }
 }
 
+function summarizeVideoElement(videoEl) {
+    if (!videoEl) return null;
+    return {
+        readyState: videoEl.readyState,
+        paused: videoEl.paused,
+        ended: videoEl.ended,
+        currentTime: Number(videoEl.currentTime || 0),
+        videoWidth: videoEl.videoWidth || 0,
+        videoHeight: videoEl.videoHeight || 0
+    };
+}
+
+function summarizeTransceivers() {
+    if (!peerConnection?.getTransceivers) return [];
+    return peerConnection.getTransceivers().map((transceiver, index) => ({
+        index,
+        mid: transceiver.mid || null,
+        direction: transceiver.direction || null,
+        currentDirection: transceiver.currentDirection || null,
+        senderTrack: transceiver.sender?.track ? {
+            kind: transceiver.sender.track.kind,
+            readyState: transceiver.sender.track.readyState,
+            enabled: transceiver.sender.track.enabled
+        } : null,
+        receiverTrack: transceiver.receiver?.track ? {
+            kind: transceiver.receiver.track.kind,
+            readyState: transceiver.receiver.track.readyState,
+            enabled: transceiver.receiver.track.enabled,
+            muted: transceiver.receiver.track.muted
+        } : null
+    }));
+}
+
+async function logCallDiagnostics(context = 'diag') {
+    if (!peerConnection) return;
+    let statsSummary = null;
+    try {
+        const stats = await peerConnection.getStats();
+        const inbound = [];
+        const outbound = [];
+        stats.forEach((report) => {
+            if (report.type === 'inbound-rtp') {
+                inbound.push({
+                    kind: report.kind || report.mediaType || null,
+                    packetsReceived: report.packetsReceived || 0,
+                    bytesReceived: report.bytesReceived || 0,
+                    framesDecoded: report.framesDecoded || 0,
+                    frameWidth: report.frameWidth || 0,
+                    frameHeight: report.frameHeight || 0
+                });
+            }
+            if (report.type === 'outbound-rtp') {
+                outbound.push({
+                    kind: report.kind || report.mediaType || null,
+                    packetsSent: report.packetsSent || 0,
+                    bytesSent: report.bytesSent || 0,
+                    framesEncoded: report.framesEncoded || 0,
+                    frameWidth: report.frameWidth || 0,
+                    frameHeight: report.frameHeight || 0
+                });
+            }
+        });
+        statsSummary = { inbound, outbound };
+    } catch (err) {
+        statsSummary = { error: err.message || String(err) };
+    }
+
+    await callDebugLog('call_diagnostics', {
+        context,
+        signalingState: peerConnection.signalingState,
+        iceConnectionState: peerConnection.iceConnectionState,
+        connectionState: peerConnection.connectionState,
+        iceGatheringState: peerConnection.iceGatheringState,
+        localDescriptionType: peerConnection.localDescription?.type || null,
+        remoteDescriptionType: peerConnection.remoteDescription?.type || null,
+        localIceCandidateCount,
+        remoteIceCandidateCount,
+        localVideo: summarizeVideoElement(localVideo),
+        remoteVideo: summarizeVideoElement(remoteVideo),
+        transceivers: summarizeTransceivers(),
+        stats: statsSummary
+    });
+}
+
+function startCallDiagnosticsPolling() {
+    stopCallDiagnosticsPolling();
+    callDiagnosticsInterval = setInterval(() => {
+        logCallDiagnostics('interval');
+    }, 1500);
+}
+
+function stopCallDiagnosticsPolling() {
+    if (callDiagnosticsInterval) {
+        clearInterval(callDiagnosticsInterval);
+        callDiagnosticsInterval = null;
+    }
+}
+
 function summarizeStream(stream) {
     if (!stream) return null;
     return {
@@ -1212,7 +1310,11 @@ async function callDebugLog(event, details = {}) {
         'camera_switch_error',
         'selected_candidate_pair',
         'selected_candidate_pair_error',
-        'call_routed'
+        'call_routed',
+        'outgoing_ice_ready',
+        'ice_candidate_local',
+        'ice_candidate_received',
+        'call_diagnostics'
     ]);
     if (!callDebugEnabled && !alwaysLoggedEvents.has(event)) return;
     console.log('[call-debug]', event, details);
@@ -1361,6 +1463,9 @@ let pendingIceCandidates = [];
 let currentFacingMode = 'user';
 let activeCallHasVideo = false;
 let isSwitchingCamera = false;
+let callDiagnosticsInterval = null;
+let localIceCandidateCount = 0;
+let remoteIceCandidateCount = 0;
 
 function getCallConstraints(wantVideo) {
     return {
@@ -1444,6 +1549,8 @@ async function startCall(video = true) {
         activeCallHasVideo = !!video;
         currentFacingMode = 'user';
         activeCallTargetSocketId = null;
+        localIceCandidateCount = 0;
+        remoteIceCandidateCount = 0;
         resetFloatingPreviewPosition();
         updateCallOverlayMeta(currentChatPartner.username, video ? 'Videoanruf wird aufgebaut...' : 'Sprachanruf wird aufgebaut...');
         updateCallControls();
@@ -1525,6 +1632,8 @@ async function acceptCall() {
     videoOverlay.style.display = 'flex';
     activeCallPartnerId = incomingCallData ? incomingCallData.from : null;
     activeCallTargetSocketId = incomingCallData ? (incomingCallData.fromSocketId || null) : null;
+    localIceCandidateCount = 0;
+    remoteIceCandidateCount = 0;
     
     // Check if incoming call has video to decide on our constraints (try to match)
     // For simplicity, we match: if they call audio-only, we answer audio-only.
@@ -1626,6 +1735,7 @@ socket.on('call_routed', async (data) => {
 
 // ICE Candidates
 socket.on('ice_candidate', async (candidate) => {
+    remoteIceCandidateCount += 1;
     await callDebugLog('ice_candidate_received', parseIceCandidateDetails(candidate));
     if (!peerConnection) {
         pendingIceCandidates.push(candidate);
@@ -1668,6 +1778,7 @@ function ensureCallVideoPlayback(videoEl, muted = false) {
 function endCall(isRemote = false) {
     callDebugLog('end_call', { isRemote });
     if (typeof stopSegmentation === 'function') { stopSegmentation(); }
+    stopCallDiagnosticsPolling();
     pendingIceCandidates = [];
     activeCallHasVideo = false;
     isSwitchingCamera = false;
@@ -1703,12 +1814,16 @@ function endCall(isRemote = false) {
     incomingCallData = null;
     activeCallPartnerId = null;
     activeCallTargetSocketId = null;
+    localIceCandidateCount = 0;
+    remoteIceCandidateCount = 0;
 }
 
 function createPeerConnection() {
     pendingIceCandidates = [];
     peerConnection = new RTCPeerConnection(rtcConfig);
     peerConnection.__hasRelayCandidate = false;
+    localIceCandidateCount = 0;
+    remoteIceCandidateCount = 0;
     remoteStream = new MediaStream();
     remoteVideo.srcObject = remoteStream;
     ensureCallVideoPlayback(remoteVideo, false);
@@ -1716,6 +1831,7 @@ function createPeerConnection() {
         iceServers: rtcConfig.iceServers.map(server => server.urls),
         iceTransportPolicy: rtcConfig.iceTransportPolicy || 'all'
     });
+    startCallDiagnosticsPolling();
 
     peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
@@ -1723,6 +1839,7 @@ function createPeerConnection() {
             if (candidateDetails.type === 'relay') {
                 peerConnection.__hasRelayCandidate = true;
             }
+            localIceCandidateCount += 1;
             const targetId = currentChatPartner ? currentChatPartner.id : incomingCallData?.from;
             callDebugLog('ice_candidate_local', {
                 to: targetId,
@@ -1749,6 +1866,7 @@ function createPeerConnection() {
         if (state === 'checking' || state === 'connected' || state === 'completed' || state === 'failed') {
             setTimeout(() => { logSelectedCandidatePairStats(`ice-${state}-t1`); }, 1000);
             setTimeout(() => { logSelectedCandidatePairStats(`ice-${state}-t4`); }, 4000);
+            setTimeout(() => { logCallDiagnostics(`ice-${state}-t1`); }, 1000);
         }
     };
     peerConnection.onconnectionstatechange = () => {
@@ -1787,6 +1905,7 @@ function createPeerConnection() {
                 videoHeight: remoteVideo.videoHeight
             });
             logSelectedCandidatePairStats('remote-video-loadedmetadata');
+            logCallDiagnostics('remote-video-loadedmetadata');
             updateCallOverlayMeta(null, activeCallHasVideo ? 'Gegenuebervideo aktiv' : 'Sprachverbindung aktiv');
             ensureCallVideoPlayback(remoteVideo, false);
         };
