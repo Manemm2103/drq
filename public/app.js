@@ -22,7 +22,7 @@ let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
 let callDebugEnabled = false;
-let runtimeVersionLabel = 'Version 2026-06-04.6';
+let runtimeVersionLabel = 'Version 2026-06-04.7';
 let currentChatMessages = [];
 let activeSearchTab = 'text';
 
@@ -1723,6 +1723,10 @@ function rejectCall() {
 async function flushPendingIceCandidates() {
     if (!peerConnection || !peerConnection.remoteDescription) return;
 
+    await callDebugLog('flush_pending_ice_candidates_start', {
+        count: pendingIceCandidates.length
+    });
+
     while (pendingIceCandidates.length) {
         const candidate = pendingIceCandidates.shift();
         try {
@@ -1735,6 +1739,10 @@ async function flushPendingIceCandidates() {
             console.error("Error adding queued ICE candidate", e);
         }
     }
+
+    await callDebugLog('flush_pending_ice_candidates_done', {
+        remaining: pendingIceCandidates.length
+    });
 }
 
 // Call Accepted (Initiator receives answer)
@@ -1845,7 +1853,6 @@ function endCall(isRemote = false) {
 }
 
 function createPeerConnection() {
-    pendingIceCandidates = [];
     peerConnection = new RTCPeerConnection(rtcConfig);
     peerConnection.__hasRelayCandidate = false;
     localIceCandidateCount = 0;
@@ -1854,6 +1861,7 @@ function createPeerConnection() {
     remoteVideo.srcObject = remoteStream;
     ensureCallVideoPlayback(remoteVideo, false);
     callDebugLog('peer_connection_created', {
+        pendingIceCandidates: pendingIceCandidates.length,
         iceServers: rtcConfig.iceServers.map(server => server.urls),
         iceTransportPolicy: rtcConfig.iceTransportPolicy || 'all'
     });
