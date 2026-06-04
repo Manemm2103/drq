@@ -22,7 +22,7 @@ let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
 let callDebugEnabled = false;
-let runtimeVersionLabel = 'Version 2026-06-04.4';
+let runtimeVersionLabel = 'Version 2026-06-04.5';
 let currentChatMessages = [];
 let activeSearchTab = 'text';
 
@@ -1512,11 +1512,10 @@ async function waitForOutgoingIceReadiness(context = 'offer') {
     if (!peerConnection) return;
     const needsRelay = rtcConfig.iceTransportPolicy === 'relay';
     const startedAt = Date.now();
-    const timeoutMs = needsRelay ? 2200 : 900;
+    const timeoutMs = needsRelay ? 6500 : 2000;
 
     while (Date.now() - startedAt < timeoutMs) {
         if (peerConnection.iceGatheringState === 'complete') break;
-        if (needsRelay && peerConnection.__hasRelayCandidate) break;
         await new Promise((resolve) => setTimeout(resolve, 80));
     }
 
@@ -1525,7 +1524,8 @@ async function waitForOutgoingIceReadiness(context = 'offer') {
         waitedMs: Date.now() - startedAt,
         iceGatheringState: peerConnection.iceGatheringState,
         hasRelayCandidate: !!peerConnection.__hasRelayCandidate,
-        iceTransportPolicy: rtcConfig.iceTransportPolicy || 'all'
+        iceTransportPolicy: rtcConfig.iceTransportPolicy || 'all',
+        waitMode: needsRelay ? 'complete-or-timeout' : 'short-complete-or-timeout'
     });
 }
 

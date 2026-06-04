@@ -379,7 +379,7 @@ app.delete('/api/call-debug', (req, res) => {
 
 app.get('/api/runtime-config', (req, res) => {
     res.json({
-        version: 'Version 2026-06-04.4',
+        version: 'Version 2026-06-04.5',
         rtcConfig: buildRtcConfig()
     });
 });
