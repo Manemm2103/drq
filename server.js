@@ -479,11 +479,62 @@ app.get('/api/keys/:userId', (req, res) => {
     res.json({ publicKey: user.public_key });
 });
 
+function getActiveSessionsForUser(userId) {
+    const socketIds = [...(userSockets.get(Number(userId)) || [])];
+    return socketIds.map((socketId) => {
+        const socket = io.sockets.sockets.get(socketId);
+        return {
+            socketId,
+            connected: !!socket?.connected,
+            joinedAt: socket?.data?.joinedAt || null,
+            userAgent: socket?.handshake?.headers?.['user-agent'] || ''
+        };
+    });
+}
+
 // Admin: Get all users
 app.get('/api/admin/users', (req, res) => {
     // Ideally verify requester via session/token. For now open internally.
-    const users = db.prepare('SELECT id, uin, username, role, avatar, status, can_chat FROM users').all();
+    const users = db.prepare('SELECT id, uin, username, role, avatar, status, can_chat FROM users').all()
+        .map((user) => {
+            const activeSessions = getActiveSessionsForUser(user.id);
+            return {
+                ...user,
+                active_sessions: activeSessions,
+                active_session_count: activeSessions.length
+            };
+        });
     res.json(users);
+});
+
+// Admin: Disconnect active sessions
+app.post('/api/admin/users/:id/disconnect', (req, res) => {
+    const { id } = req.params;
+    const { requesterId, socketId } = req.body || {};
+
+    const requester = db.prepare('SELECT id, role FROM users WHERE id = ?').get(requesterId);
+    if (!requester || requester.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Nur Admins dürfen das!' });
+    }
+
+    const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+    if (!user) {
+        return res.status(404).json({ success: false, message: 'User nicht gefunden!' });
+    }
+
+    const targetSocketIds = socketId
+        ? [socketId]
+        : [...(userSockets.get(Number(id)) || [])];
+
+    targetSocketIds.forEach((targetSocketId) => {
+        const targetSocket = io.sockets.sockets.get(targetSocketId);
+        if (targetSocket) {
+            targetSocket.emit('admin_force_logout', { reason: 'Diese Sitzung wurde vom Admin beendet.' });
+            targetSocket.disconnect(true);
+        }
+    });
+
+    res.json({ success: true, disconnected: targetSocketIds.length });
 });
 
 // Admin: Toggle Chat Permission
@@ -742,6 +793,7 @@ io.on('connection', (socket) => {
     socket.on('join', (userId) => {
         onlineUsers.set(socket.id, userId);
         addUserSocket(userId, socket.id);
+        socket.data.joinedAt = new Date().toISOString();
         socket.join(`user_${userId}`);
 
         const user = db.prepare('SELECT status, custom_status FROM users WHERE id = ?').get(userId);

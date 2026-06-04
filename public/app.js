@@ -22,7 +22,7 @@ let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
 let callDebugEnabled = false;
-let runtimeVersionLabel = 'Version 2026-06-03.13';
+let runtimeVersionLabel = 'Version 2026-06-04.1';
 let currentChatMessages = [];
 let activeSearchTab = 'text';
 
@@ -182,6 +182,18 @@ async function login() {
 function logout() {
     localStorage.removeItem('icq_user');
     location.reload();
+}
+
+function formatSessionTime(isoString) {
+    if (!isoString) return 'unbekannt';
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return 'unbekannt';
+    return date.toLocaleString('de-DE', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
 }
 
 // --- Profile Management ---
@@ -365,6 +377,13 @@ async function loadUsers() {
             meta.style.marginTop = '4px';
             meta.textContent = `Rolle: ${user.role}`;
             info.appendChild(meta);
+
+            const sessionMeta = document.createElement('div');
+            sessionMeta.style.fontSize = '0.82rem';
+            sessionMeta.style.color = '#666';
+            sessionMeta.style.marginTop = '4px';
+            sessionMeta.textContent = `Sitzungen: ${user.active_session_count || 0}`;
+            info.appendChild(sessionMeta);
             
             const controls = document.createElement('div');
             controls.style.display = 'flex';
@@ -411,6 +430,38 @@ async function loadUsers() {
             passwordRow.appendChild(savePasswordBtn);
 
             controls.appendChild(passwordRow);
+
+            if ((user.active_sessions || []).length) {
+                const sessionList = document.createElement('div');
+                sessionList.className = 'session-list';
+
+                user.active_sessions.forEach((session) => {
+                    const sessionRow = document.createElement('div');
+                    sessionRow.className = 'session-row';
+
+                    const sessionText = document.createElement('div');
+                    sessionText.className = 'session-info';
+                    const suffix = session.socketId ? session.socketId.slice(-6) : '------';
+                    sessionText.textContent = `Online · ${formatSessionTime(session.joinedAt)} · ${suffix}`;
+                    sessionRow.appendChild(sessionText);
+
+                    const kickBtn = document.createElement('button');
+                    kickBtn.innerText = 'Kill';
+                    kickBtn.className = 'session-kill-btn';
+                    kickBtn.onclick = () => disconnectUserSession(user.id, session.socketId);
+                    sessionRow.appendChild(kickBtn);
+
+                    sessionList.appendChild(sessionRow);
+                });
+
+                const killAllBtn = document.createElement('button');
+                killAllBtn.innerText = 'Alle Sitzungen trennen';
+                killAllBtn.className = 'session-kill-all-btn';
+                killAllBtn.onclick = () => disconnectUserSession(user.id);
+                sessionList.appendChild(killAllBtn);
+
+                controls.appendChild(sessionList);
+            }
 
             if (!(user.role === 'admin' && user.id === currentUser.id)) {
                 const delBtn = document.createElement('button');
@@ -493,6 +544,20 @@ async function updateUserPassword(id, passwordInput) {
         alert("Passwort geändert!");
     } catch (err) {
         alert(err.response?.data?.message || "Fehler beim Ändern des Passworts!");
+    }
+}
+
+async function disconnectUserSession(id, socketId = null) {
+    const confirmText = socketId ? 'Diese Sitzung wirklich trennen?' : 'Alle Sitzungen dieses Users wirklich trennen?';
+    if (!confirm(confirmText)) return;
+    try {
+        await axios.post(`/api/admin/users/${id}/disconnect`, {
+            requesterId: currentUser.id,
+            socketId
+        });
+        loadUsers();
+    } catch (err) {
+        alert(err.response?.data?.message || 'Fehler beim Trennen der Sitzung!');
     }
 }
 
@@ -2061,6 +2126,11 @@ socket.on('connect', () => {
     if (currentUser) {
         socket.emit('join', currentUser.id);
     }
+});
+
+socket.on('admin_force_logout', (payload) => {
+    alert(payload?.reason || 'Diese Sitzung wurde vom Admin beendet.');
+    logout();
 });
 
 // Ping activity to server on touch or focus

@@ -526,14 +526,16 @@ body, html {
 .message-status {
     display: inline-flex;
     align-items: center;
-    gap: 1px;
-    min-width: 16px;
+    gap: 0;
+    min-width: 12px;
+    letter-spacing: -0.08em;
 }
 
 .message-status .tick {
     font-size: 0.78rem;
     line-height: 1;
     color: #9ca3af;
+    margin-left: -0.12em;
 }
 
 .message-status.delivered .tick {
@@ -546,6 +548,48 @@ body, html {
 
 .message-status.single .tick:last-child {
     display: none;
+}
+
+.message-status.single .tick:first-child {
+    margin-left: 0;
+}
+
+.session-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.session-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 6px;
+}
+
+.session-info {
+    font-size: 0.8rem;
+    color: #444;
+    word-break: break-word;
+}
+
+.session-kill-btn,
+.session-kill-all-btn {
+    padding: 6px 10px;
+    border: 1px solid #d1d5db;
+    background: #111;
+    color: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.session-kill-all-btn {
+    align-self: flex-start;
+    margin-top: 4px;
 }
 
 /* --- Copy Icon --- */
