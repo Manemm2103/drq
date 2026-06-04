@@ -53,9 +53,9 @@ Use `portainer-stack.yml` when deploying from Git in Portainer.
 APP_PORT=3000
 VAPID_PUBLIC_KEY=your_public_key
 VAPID_PRIVATE_KEY=your_private_key
-TURN_PUBLIC_HOST=icq2.inetcompany.de
-TURN_REALM=icq2.inetcompany.de
-TURN_EXTERNAL_IP=142.132.135.225
+TURN_PUBLIC_HOST=yourdomain.de
+TURN_REALM=yourdomain.de
+TURN_EXTERNAL_IP=yourIP
 TURN_USERNAME=your_turn_username
 TURN_CREDENTIAL=your_turn_password
 ```
