@@ -932,7 +932,8 @@ function appendMessage(msg) {
     if (existing) existing.remove();
     const div = document.createElement('div');
     const isMe = msg.sender_id === currentUser.id;
-    div.className = `message ${isMe ? 'sent' : 'received'}`;
+    const severityClass = msg.severity ? ` severity-${msg.severity}` : '';
+    div.className = `message ${isMe ? 'sent' : 'received'}${severityClass}`;
     
     // Reply Context
     let replyHtml = '';

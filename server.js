@@ -184,10 +184,11 @@ function broadcastVisibleUserList() {
     io.emit('user_list', publicUsers);
 }
 
-function createStoredMessage({ senderId, receiverId, content, type = 'text', filename = null, replyToId = null, isEncrypted = 0 }) {
+function createStoredMessage({ senderId, receiverId, content, type = 'text', filename = null, replyToId = null, isEncrypted = 0, severity = '' }) {
     const deliveredAt = isUserOnline(receiverId) ? new Date().toISOString() : null;
-    const stmt = db.prepare('INSERT INTO messages (sender_id, receiver_id, content, type, filename, reply_to_id, is_encrypted, delivered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    const info = stmt.run(senderId, receiverId, content, type, filename, replyToId, isEncrypted ? 1 : 0, deliveredAt);
+    const normalizedSeverity = typeof severity === 'string' ? severity.trim().toLowerCase() : '';
+    const stmt = db.prepare('INSERT INTO messages (sender_id, receiver_id, content, type, filename, reply_to_id, is_encrypted, delivered_at, severity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const info = stmt.run(senderId, receiverId, content, type, filename, replyToId, isEncrypted ? 1 : 0, deliveredAt, normalizedSeverity);
 
     let replyData = null;
     if (replyToId) {
@@ -201,6 +202,7 @@ function createStoredMessage({ senderId, receiverId, content, type = 'text', fil
         content,
         type,
         filename,
+        severity: normalizedSeverity,
         delivered_at: deliveredAt,
         is_read: 0,
         is_encrypted: isEncrypted ? 1 : 0,
@@ -324,6 +326,7 @@ db.exec(`
         receiver_id INTEGER,
         content TEXT,
         type TEXT DEFAULT 'text',
+        severity TEXT DEFAULT '',
         delivered_at DATETIME,
         is_read INTEGER DEFAULT 0,
         is_encrypted INTEGER DEFAULT 0, -- New: Flag for E2EE
@@ -363,6 +366,10 @@ try {
     if (!msgCols.some(c => c.name === 'is_encrypted')) {
         db.prepare("ALTER TABLE messages ADD COLUMN is_encrypted INTEGER DEFAULT 0").run();
         console.log("Migration: Added is_encrypted to messages");
+    }
+    if (!msgCols.some(c => c.name === 'severity')) {
+        db.prepare("ALTER TABLE messages ADD COLUMN severity TEXT DEFAULT ''").run();
+        console.log("Migration: Added severity to messages");
     }
 } catch (e) { console.error("Migration error:", e); }
 
@@ -512,11 +519,12 @@ app.post('/api/integrations/iobroker/messages', (req, res) => {
         return res.status(404).json({ success: false, message: 'No matching DRQ recipients found', missingRecipients });
     }
 
+    const normalizedSeverity = severity.toLowerCase();
+    const showSource = source && source.toLowerCase() !== 'iobroker';
     const formattedMessage = [
         title ? `[${title}]` : '',
         messageText,
-        source ? `\n\nQuelle: ${source}` : '',
-        severity ? `\nPrioritaet: ${severity}` : ''
+        showSource ? `\nQuelle: ${source}` : ''
     ].join('').trim();
 
     try {
@@ -525,7 +533,8 @@ app.post('/api/integrations/iobroker/messages', (req, res) => {
                 senderId: iobrokerSenderUser.id,
                 receiverId: user.id,
                 content: formattedMessage,
-                type: 'text'
+                type: 'text',
+                severity: normalizedSeverity === 'info' ? '' : normalizedSeverity
             });
             return {
                 userId: user.id,
@@ -1022,7 +1031,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('send_message', (data) => {
-        const { senderId, receiverId, content, type, filename, replyToId, isEncrypted } = data;
+        const { senderId, receiverId, content, type, filename, replyToId, isEncrypted, severity } = data;
         createStoredMessage({
             senderId,
             receiverId,
@@ -1030,7 +1039,8 @@ io.on('connection', (socket) => {
             type: type || 'text',
             filename: filename || null,
             replyToId: replyToId || null,
-            isEncrypted: isEncrypted ? 1 : 0
+            isEncrypted: isEncrypted ? 1 : 0,
+            severity: severity || ''
         });
     });
 
