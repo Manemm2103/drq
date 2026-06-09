@@ -652,6 +652,8 @@ function getContactStateForUser(userId) {
             c.status,
             c.requester_id,
             c.addressee_id,
+            c.created_at,
+            c.updated_at,
             u.id AS user_id,
             u.uin,
             u.username,
@@ -671,6 +673,8 @@ function getContactStateForUser(userId) {
             c.status,
             c.requester_id,
             c.addressee_id,
+            c.created_at,
+            c.updated_at,
             u.id AS user_id,
             u.uin,
             u.username,
@@ -684,7 +688,31 @@ function getContactStateForUser(userId) {
         ORDER BY c.created_at DESC
     `).all(Number(userId));
 
-    return { accepted, pendingIncoming, pendingOutgoing };
+    const rejected = db.prepare(`
+        SELECT
+            c.id,
+            c.status,
+            c.requester_id,
+            c.addressee_id,
+            c.created_at,
+            c.updated_at,
+            u.id AS user_id,
+            u.uin,
+            u.username,
+            u.avatar,
+            u.status AS online_status,
+            u.custom_status
+        FROM contacts c
+        JOIN users u ON u.id = CASE
+            WHEN c.requester_id = ? THEN c.addressee_id
+            ELSE c.requester_id
+        END
+        WHERE c.status = 'rejected'
+          AND (c.requester_id = ? OR c.addressee_id = ?)
+        ORDER BY c.updated_at DESC, c.created_at DESC
+    `).all(Number(userId), Number(userId), Number(userId));
+
+    return { accepted, pendingIncoming, pendingOutgoing, rejected };
 }
 
 function getIntegrationTokensForUser(userId) {
@@ -1209,16 +1237,70 @@ app.post('/api/profile/:id/contacts/:contactId/reject', (req, res) => {
         return res.status(403).json({ success: false, message: 'Nicht erlaubt' });
     }
 
-    db.prepare(`
-        DELETE FROM contacts
+    const contact = db.prepare(`
+        SELECT * FROM contacts
         WHERE id = ?
           AND (
                 requester_id = ?
                 OR addressee_id = ?
               )
-    `).run(contactId, userId, userId);
+    `).get(contactId, userId, userId);
 
-    io.to(`user_${userId}`).emit('contacts_updated');
+    if (!contact) {
+        return res.status(404).json({ success: false, message: 'Anfrage nicht gefunden' });
+    }
+
+    db.prepare(`
+        UPDATE contacts
+        SET status = 'rejected', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(contactId);
+
+    const affectedUserIds = [...new Set([contact.requester_id, contact.addressee_id].map(Number).filter(Boolean))];
+    affectedUserIds.forEach((affectedUserId) => {
+        broadcastVisibleUserList(affectedUserId);
+        io.to(`user_${affectedUserId}`).emit('contacts_updated');
+    });
+    res.json({ success: true });
+});
+
+app.delete('/api/profile/:id/contacts/:contactId', (req, res) => {
+    const userId = Number(req.params.id);
+    const requesterId = Number(req.body?.requesterId || userId);
+    const contactId = Number(req.params.contactId);
+
+    if (userId !== requesterId) {
+        return res.status(403).json({ success: false, message: 'Nicht erlaubt' });
+    }
+
+    const contact = db.prepare(`
+        SELECT * FROM contacts
+        WHERE id = ?
+          AND (
+                requester_id = ?
+                OR addressee_id = ?
+              )
+    `).get(contactId, userId, userId);
+
+    if (!contact) {
+        return res.status(404).json({ success: false, message: 'Eintrag nicht gefunden' });
+    }
+
+    if (!['rejected', 'pending'].includes(String(contact.status || ''))) {
+        return res.status(400).json({ success: false, message: 'Nur offene oder abgelehnte Anfragen koennen geloescht werden' });
+    }
+
+    db.prepare('DELETE FROM contacts WHERE id = ?').run(contactId);
+
+    if (contact.requester_id) {
+        io.to(`user_${contact.requester_id}`).emit('contacts_updated');
+        broadcastVisibleUserList(contact.requester_id);
+    }
+    if (contact.addressee_id) {
+        io.to(`user_${contact.addressee_id}`).emit('contacts_updated');
+        broadcastVisibleUserList(contact.addressee_id);
+    }
+
     res.json({ success: true });
 });
 

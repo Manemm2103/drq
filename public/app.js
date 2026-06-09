@@ -25,6 +25,11 @@ let callDebugEnabled = false;
 let runtimeVersionLabel = 'Version 2026-06-04.7';
 let currentChatMessages = [];
 let activeSearchTab = 'text';
+let contactStateCache = {
+    pendingIncoming: [],
+    pendingOutgoing: [],
+    rejected: []
+};
 
 const soundUhOh = document.getElementById('sound-uhoh');
 const soundRing = document.getElementById('sound-ring');
@@ -72,6 +77,7 @@ window.onload = async () => {
     
     const savedUnread = localStorage.getItem('icq_unread');
     if (savedUnread) unreadCounts = JSON.parse(savedUnread);
+    setChatComposerDisabled(true, 'Bitte zuerst einen Chat waehlen');
 };
 
 function toggleSound(enabled) {
@@ -106,6 +112,7 @@ function restoreSession(user) {
     mainApp.classList.add('active');
     
     applyChatBackground(user.chat_bg);
+    loadContactState();
     socket.emit('join', currentUser.id);
 }
 
@@ -246,6 +253,11 @@ async function loadContactState() {
             params: { requesterId: currentUser.id }
         });
         const data = res.data || {};
+        contactStateCache = {
+            pendingIncoming: data.pendingIncoming || [],
+            pendingOutgoing: data.pendingOutgoing || [],
+            rejected: data.rejected || []
+        };
         renderProfileEntityList('pending-contacts-list', data.pendingIncoming || [], {
             emptyText: 'Keine offenen Anfragen',
             meta: item => `DRQ#: ${item.uin}`,
@@ -256,12 +268,16 @@ async function loadContactState() {
         });
         renderProfileEntityList('outgoing-contacts-list', data.pendingOutgoing || [], {
             emptyText: 'Keine gesendeten Anfragen',
-            meta: item => `DRQ#: ${item.uin}`
+            meta: item => `DRQ#: ${item.uin}`,
+            actions: item => `
+                <button type="button" class="secondary-btn" onclick="deleteContactRequest(${item.id})">Entfernen</button>
+            `
         });
         renderProfileEntityList('accepted-contacts-list', data.accepted || [], {
             emptyText: 'Noch keine Kontakte',
             meta: item => `DRQ#: ${item.uin}`
         });
+        renderUserList();
     } catch (err) {
         console.error('Failed to load contacts', err);
     }
@@ -286,10 +302,22 @@ async function sendContactRequest() {
 
 async function acceptContact(contactId) {
     try {
+        const activeEntry = (contactStateCache.pendingIncoming || []).find(item => item.id === contactId);
         await axios.post(`/api/profile/${currentUser.id}/contacts/${contactId}/accept`, {
             requesterId: currentUser.id
         });
         await loadContactState();
+        if (activeEntry) {
+            const acceptedUser = allUsersCache.find(user => user.id === activeEntry.user_id) || {
+                id: activeEntry.user_id,
+                uin: activeEntry.uin,
+                username: activeEntry.username,
+                avatar: activeEntry.avatar,
+                status: activeEntry.online_status || 'offline',
+                custom_status: activeEntry.custom_status || ''
+            };
+            openChat(acceptedUser);
+        }
     } catch (err) {
         alert(err.response?.data?.message || 'Anfrage konnte nicht angenommen werden');
     }
@@ -301,8 +329,31 @@ async function rejectContact(contactId) {
             requesterId: currentUser.id
         });
         await loadContactState();
+        const rejectedEntry = (contactStateCache.rejected || []).find(item => item.id === contactId);
+        if (rejectedEntry && currentChatPartner && currentChatPartner.id === contactId) {
+            openChat({
+                ...rejectedEntry,
+                kind: 'contact_request_rejected',
+                requestState: 'rejected',
+                displayName: rejectedEntry.username
+            });
+        }
     } catch (err) {
         alert(err.response?.data?.message || 'Anfrage konnte nicht entfernt werden');
+    }
+}
+
+async function deleteContactRequest(contactId) {
+    try {
+        await axios.delete(`/api/profile/${currentUser.id}/contacts/${contactId}`, {
+            data: { requesterId: currentUser.id }
+        });
+        if (currentChatPartner && currentChatPartner.id === contactId && currentChatPartner.kind) {
+            closeChat();
+        }
+        await loadContactState();
+    } catch (err) {
+        alert(err.response?.data?.message || 'Eintrag konnte nicht geloescht werden');
     }
 }
 
@@ -736,9 +787,7 @@ socket.on('user_list', (users) => {
 });
 
 socket.on('contacts_updated', () => {
-    if (profileModal.style.display === 'block') {
-        loadContactState();
-    }
+    loadContactState();
 });
 
 
@@ -775,36 +824,90 @@ function renderUserList() {
         return a.username.localeCompare(b.username);
     });
 
-    allUsersCache.forEach(user => {
-        if (user.id === currentUser.id) return; // Don't show self
-        
+    const requestEntries = buildContactRequestEntries();
+    const visibleUsers = allUsersCache.filter(user => user.id !== currentUser.id);
+    const mergedEntries = [...requestEntries, ...visibleUsers];
+
+    mergedEntries.forEach(user => {
         const div = document.createElement('div');
-        div.className = `contact-item ${user.status}`;
+        const stateClass = user.requestState ? `request-${user.requestState}` : (user.status || 'offline');
+        div.className = `contact-item ${stateClass}`;
         div.onclick = () => openChat(user);
         
-        if (currentChatPartner && currentChatPartner.id === user.id) {
+        if (currentChatPartner && getChatEntryKey(currentChatPartner) === getChatEntryKey(user)) {
             div.classList.add('active');
         }
 
-        const count = unreadCounts[user.id] || 0;
+        const count = user.kind === 'user' || !user.kind ? (unreadCounts[user.id] || 0) : 0;
         const badgeHtml = count > 0 ? `<span class="unread-badge active">${count}</span>` : `<span class="unread-badge"></span>`;
         const avatarUrl = user.avatar ? `/uploads/${user.avatar}` : '';
         
         // Avatar Style for list
         const avatarDiv = `<div class="contact-avatar" style="${avatarUrl ? `background-image: url('${avatarUrl}')` : ''}"></div>`;
-        const statusMsg = user.custom_status ? `<div class="contact-status-msg">${escapeHtml(user.custom_status)}</div>` : '';
+        const statusMsgText = getContactListSubtitle(user);
+        const statusMsg = statusMsgText ? `<div class="contact-status-msg">${escapeHtml(statusMsgText)}</div>` : '';
 
         div.innerHTML = `
             ${avatarDiv}
-            <div class="contact-status-mini ${user.status}"></div>
+            <div class="contact-status-mini ${getContactIndicatorClass(user)}"></div>
             <div class="contact-info">
-                <div class="contact-name">${user.username}</div>
-                <div class="contact-uin">DRQ#: ${user.uin} ${statusMsg}</div>
+                <div class="contact-name">${escapeHtml(user.displayName || user.username)}</div>
+                <div class="contact-uin">${escapeHtml(getContactMetaLabel(user))} ${statusMsg}</div>
             </div>
             ${badgeHtml}
         `;
         contactList.appendChild(div);
     });
+}
+
+function buildContactRequestEntries() {
+    const incoming = (contactStateCache.pendingIncoming || []).map(item => ({
+        ...item,
+        kind: 'contact_request_incoming',
+        requestState: 'pending',
+        displayName: item.username
+    }));
+    const outgoing = (contactStateCache.pendingOutgoing || []).map(item => ({
+        ...item,
+        kind: 'contact_request_outgoing',
+        requestState: 'outgoing',
+        displayName: item.username
+    }));
+    const rejected = (contactStateCache.rejected || []).map(item => ({
+        ...item,
+        kind: 'contact_request_rejected',
+        requestState: 'rejected',
+        displayName: item.username
+    }));
+    return [...incoming, ...outgoing, ...rejected];
+}
+
+function getChatEntryKey(entry) {
+    if (!entry) return '';
+    if (entry.contactId) return `contact:${entry.contactId}`;
+    if (entry.id && entry.kind && entry.kind !== 'user') return `contact:${entry.id}`;
+    return `user:${entry.id}`;
+}
+
+function getContactIndicatorClass(entry) {
+    if (entry.requestState === 'pending') return 'pending';
+    if (entry.requestState === 'outgoing') return 'outgoing';
+    if (entry.requestState === 'rejected') return 'inactive';
+    return entry.status || entry.online_status || 'offline';
+}
+
+function getContactMetaLabel(entry) {
+    if (entry.requestState === 'pending') return `Anfrage · DRQ#: ${entry.uin}`;
+    if (entry.requestState === 'outgoing') return `Ausstehend · DRQ#: ${entry.uin}`;
+    if (entry.requestState === 'rejected') return `Inaktiv · DRQ#: ${entry.uin}`;
+    return `DRQ#: ${entry.uin}`;
+}
+
+function getContactListSubtitle(entry) {
+    if (entry.requestState === 'pending') return 'Kontaktanfrage wartet auf deine Entscheidung';
+    if (entry.requestState === 'outgoing') return 'Anfrage gesendet';
+    if (entry.requestState === 'rejected') return 'Anfrage abgelehnt';
+    return entry.custom_status || '';
 }
 
 socket.on('receive_message', (msg) => {
@@ -1017,8 +1120,8 @@ function updateMessageStatusUi(message) {
 
 async function openChat(user) {
     currentChatPartner = user;
-    chatTitle.textContent = `${user.username} (${user.uin})`;
-    document.getElementById('chat-subtitle').textContent = user.custom_status || '';
+    chatTitle.textContent = `${user.displayName || user.username} (${user.uin})`;
+    document.getElementById('chat-subtitle').textContent = getChatSubtitle(user);
     
     // Set Header Avatar
     const avatarUrl = user.avatar ? `/uploads/${user.avatar}` : '';
@@ -1032,10 +1135,12 @@ async function openChat(user) {
     
     // Update Status Dot in Header
     const statusDot = document.getElementById('chat-status');
-    statusDot.className = `status-dot ${user.status || 'offline'}`;
+    statusDot.className = `status-dot ${getContactIndicatorClass(user)}`;
     
-    unreadCounts[user.id] = 0;
-    saveUnread();
+    if (user.kind === 'user' || !user.kind) {
+        unreadCounts[user.id] = 0;
+        saveUnread();
+    }
     renderUserList();
     updateGlobalUnreadBadge();
     if (chatSearchBtn) chatSearchBtn.style.display = 'inline-block';
@@ -1051,9 +1156,15 @@ async function openChat(user) {
     document.getElementById('chat-area').style.transform = "translateX(0)";
 
     messagesDiv.innerHTML = '';
+    if (user.kind && user.kind !== 'user') {
+        renderContactRequestChat(user);
+        return;
+    }
+
     const res = await axios.get(`/api/history/${currentUser.id}/${user.id}`);
     currentChatMessages = res.data;
     renderCurrentChatMessages();
+    setChatComposerDisabled(false);
     scrollToBottom();
 }
 
@@ -1231,6 +1342,7 @@ function scrollToBottom() {
 function sendMessage() {
     const text = messageInput.value.trim();
     if (!text || !currentChatPartner) return;
+    if (currentChatPartner.kind && currentChatPartner.kind !== 'user') return;
 
     socket.emit('send_message', {
         senderId: currentUser.id,
@@ -1243,6 +1355,73 @@ function sendMessage() {
     messageInput.value = '';
     messageInput.style.height = '40px'; // Reset height after send
     cancelReply(); // Clear reply state
+}
+
+function getChatSubtitle(user) {
+    if (user.requestState === 'pending') return 'Neue Kontaktanfrage';
+    if (user.requestState === 'outgoing') return 'Wartet auf Annahme';
+    if (user.requestState === 'rejected') return 'Anfrage abgelehnt';
+    return user.custom_status || '';
+}
+
+function renderContactRequestChat(user) {
+    currentChatMessages = [];
+    const title = escapeHtml(user.displayName || user.username);
+    const requestText = user.requestState === 'pending'
+        ? 'moechte dich als Kontakt hinzufuegen.'
+        : user.requestState === 'outgoing'
+            ? 'hat deine Anfrage noch nicht bestaetigt.'
+            : 'ist als inaktiver Kontakt gespeichert.';
+
+    const actions = [];
+    if (user.requestState === 'pending') {
+        actions.push(`<button type="button" class="request-action-btn" onclick="acceptContact(${user.id})">Annehmen</button>`);
+        actions.push(`<button type="button" class="request-action-btn secondary" onclick="rejectContact(${user.id})">Ablehnen</button>`);
+    } else if (user.requestState === 'outgoing') {
+        actions.push(`<button type="button" class="request-action-btn secondary" onclick="deleteContactRequest(${user.id})">Anfrage entfernen</button>`);
+    } else if (user.requestState === 'rejected') {
+        actions.push(`<button type="button" class="request-action-btn secondary" onclick="deleteContactRequest(${user.id})">Eintrag loeschen</button>`);
+    }
+
+    messagesDiv.innerHTML = `
+        <div class="request-chat-card ${user.requestState === 'rejected' ? 'inactive' : ''}">
+            <div class="request-chat-kicker">${user.requestState === 'pending' ? 'Kontaktanfrage' : user.requestState === 'outgoing' ? 'Gesendete Anfrage' : 'Inaktiver Kontakt'}</div>
+            <h4>${title}</h4>
+            <p>${title} ${requestText}</p>
+            <div class="request-chat-meta">DRQ#: ${escapeHtml(String(user.uin || ''))}</div>
+            <div class="request-chat-actions">${actions.join('')}</div>
+        </div>
+    `;
+    setChatComposerDisabled(true, user.requestState === 'pending'
+        ? 'Bitte erst Anfrage annehmen oder ablehnen'
+        : user.requestState === 'outgoing'
+            ? 'Nachrichten sind erst nach Annahme moeglich'
+            : 'Dieser Chat ist inaktiv');
+}
+
+function setChatComposerDisabled(disabled, placeholderText = 'Nachricht eingeben...') {
+    messageInput.disabled = disabled;
+    messageInput.placeholder = placeholderText;
+    const actionSelectors = ['.send-btn', '.attach-btn', '.code-btn', '.md-btn'];
+    actionSelectors.forEach((selector) => {
+        document.querySelectorAll(selector).forEach((button) => {
+            button.style.pointerEvents = disabled ? 'none' : '';
+            button.style.opacity = disabled ? '0.45' : '';
+        });
+    });
+}
+
+function closeChat() {
+    currentChatPartner = null;
+    currentChatMessages = [];
+    chatTitle.textContent = 'Wähle einen Kontakt';
+    document.getElementById('chat-subtitle').textContent = '';
+    document.getElementById('chat-avatar').style.backgroundImage = 'none';
+    document.getElementById('chat-avatar').style.backgroundColor = '#ccc';
+    document.getElementById('chat-status').className = 'status-dot offline';
+    messagesDiv.innerHTML = '<div class="empty-state"><p>Waehle links einen Chat oder eine Anfrage.</p></div>';
+    setChatComposerDisabled(true, 'Bitte zuerst einen Chat waehlen');
+    renderUserList();
 }
 
 function toggleEnterSend(enabled) {

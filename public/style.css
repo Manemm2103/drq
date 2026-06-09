@@ -199,6 +199,9 @@ body, html {
 .contact-status-mini.online { background: #22c55e; }
 .contact-status-mini.offline { background: #9ca3af; }
 .contact-status-mini.away { background: var(--secondary); }
+.contact-status-mini.pending { background: #f59e0b; }
+.contact-status-mini.outgoing { background: #60a5fa; }
+.contact-status-mini.inactive { background: #6b7280; }
 
 /* Hide old standalone status if present, or repurposed above */
 .contact-status { display: none; }
@@ -208,6 +211,16 @@ body, html {
 
 .contact-item:hover { background: rgba(17,17,17,0.06); }
 .contact-item.active { background: rgba(17,17,17,0.1); }
+.contact-item.request-pending {
+    background: rgba(245, 158, 11, 0.09);
+}
+.contact-item.request-outgoing {
+    background: rgba(96, 165, 250, 0.08);
+}
+.contact-item.request-rejected {
+    background: rgba(107, 114, 128, 0.1);
+    color: #6b7280;
+}
 
 /* Remove old contact-status block if it exists below */
 
@@ -399,6 +412,9 @@ body, html {
 }
 .status-dot.online { background-color: #22c55e; }
 .status-dot.offline { background-color: #9ca3af; }
+.status-dot.pending { background-color: #f59e0b; }
+.status-dot.outgoing { background-color: #60a5fa; }
+.status-dot.inactive { background-color: #6b7280; }
 
 .status-indicator.online { background-color: #22c55e; }
 .status-indicator.offline { background-color: #9ca3af; }
@@ -459,6 +475,75 @@ body, html {
     border-radius: 8px; /* Rounded corners */
     margin-top: 10px; /* Spacing from header */
     margin-bottom: 10px; /* Spacing from input */
+}
+
+.empty-state {
+    margin: auto;
+    text-align: center;
+    color: #6b7280;
+    padding: 24px;
+}
+
+.request-chat-card {
+    width: min(100%, 520px);
+    margin: auto;
+    padding: 24px;
+    border-radius: 12px;
+    background: #fffdf7;
+    border: 1px solid #f3d9a1;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.06);
+}
+
+.request-chat-card.inactive {
+    background: #f3f4f6;
+    border-color: #d1d5db;
+    color: #4b5563;
+}
+
+.request-chat-card h4 {
+    margin: 4px 0 10px;
+    font-size: 1.15rem;
+}
+
+.request-chat-card p {
+    margin: 0 0 10px;
+    line-height: 1.5;
+}
+
+.request-chat-kicker {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #b45309;
+    text-transform: uppercase;
+}
+
+.request-chat-card.inactive .request-chat-kicker {
+    color: #6b7280;
+}
+
+.request-chat-meta {
+    font-size: 0.85rem;
+    color: #6b7280;
+}
+
+.request-chat-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 18px;
+}
+
+.request-action-btn {
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    background: #111827;
+    color: #fff;
+    cursor: pointer;
+}
+
+.request-action-btn.secondary {
+    background: #6b7280;
 }
 
 .message {
