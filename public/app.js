@@ -1328,16 +1328,20 @@ function appendMessage(msg) {
         copyText = msg.content;
     
     } else if (msg.type === 'video') {
-        contentHtml = `<strong>📹 Videonachricht</strong><br><video src="/uploads/${msg.filename}" controls style="max-width: 100%; border-radius: 8px; margin-top: 5px;"></video>`;
+        const captionHtml = msg.content ? `<div class="media-caption">${formatText(msg.content)}</div>` : '';
+        contentHtml = `${captionHtml}<strong>📹 Videonachricht</strong><br><video src="/uploads/${msg.filename}" controls style="max-width: 100%; border-radius: 8px; margin-top: 5px;"></video>`;
         copyText = window.location.origin + '/uploads/' + msg.filename;
     } else if (msg.type === 'audio') {
-        contentHtml = `<strong>🎤 Sprachnachricht</strong><br><audio src="/uploads/${msg.filename}" controls style="width: 100%; margin-top: 5px;"></audio>`;
+        const captionHtml = msg.content ? `<div class="media-caption">${formatText(msg.content)}</div>` : '';
+        contentHtml = `${captionHtml}<strong>🎤 Sprachnachricht</strong><br><audio src="/uploads/${msg.filename}" controls style="width: 100%; margin-top: 5px;"></audio>`;
         copyText = window.location.origin + '/uploads/' + msg.filename;
 } else if (msg.type === 'image') {
-        contentHtml = `<img src="/uploads/${msg.filename}" alt="Image" onclick="window.open(this.src)">`;
+        const captionHtml = msg.content ? `<div class="media-caption">${formatText(msg.content)}</div>` : '';
+        contentHtml = `${captionHtml}<img src="/uploads/${msg.filename}" alt="Image" onclick="window.open(this.src)">`;
         copyText = window.location.origin + '/uploads/' + msg.filename;
     } else {
-        contentHtml = `<a href="/uploads/${msg.filename}" download="${msg.filename}">📎 ${msg.filename}</a>`;
+        const captionHtml = msg.content ? `<div class="media-caption">${formatText(msg.content)}</div>` : '';
+        contentHtml = `${captionHtml}<a href="/uploads/${msg.filename}" download="${msg.filename}">📎 ${msg.filename}</a>`;
         copyText = window.location.origin + '/uploads/' + msg.filename;
     }
 

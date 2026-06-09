@@ -155,6 +155,24 @@ function generateIntegrationTokenValue() {
     return crypto.randomBytes(24).toString('hex');
 }
 
+function detectMediaMessageType({ mimeType = '', originalName = '', requestedType = '' } = {}) {
+    const normalizedRequested = String(requestedType || '').trim().toLowerCase();
+    if (['image', 'video', 'audio', 'file'].includes(normalizedRequested)) {
+        return normalizedRequested;
+    }
+
+    const normalizedMime = String(mimeType || '').trim().toLowerCase();
+    if (normalizedMime.startsWith('image/')) return 'image';
+    if (normalizedMime.startsWith('video/')) return 'video';
+    if (normalizedMime.startsWith('audio/')) return 'audio';
+
+    const ext = path.extname(String(originalName || '')).toLowerCase();
+    if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].includes(ext)) return 'image';
+    if (['.mp4', '.webm', '.mov', '.m4v', '.avi', '.mkv'].includes(ext)) return 'video';
+    if (['.mp3', '.wav', '.ogg', '.m4a', '.aac'].includes(ext)) return 'audio';
+    return 'file';
+}
+
 function normalizeIntegrationUsernameInput(value) {
     const raw = String(value || '').trim().toLowerCase();
     if (!raw) return '';
@@ -454,6 +472,7 @@ const bgStorage = multer.diskStorage({
     }
 });
 const bgUpload = multer({ storage: bgStorage });
+const integrationMediaUpload = multer({ storage });
 
 // --- Database Schema ---
 db.exec(`
@@ -993,6 +1012,119 @@ app.post('/api/integrations/iobroker/messages', (req, res) => {
     } catch (error) {
         console.error('ioBroker integration send failed:', error);
         res.status(500).json({ success: false, message: 'Failed to send DRQ message' });
+    }
+});
+
+app.post('/api/integrations/iobroker/media', integrationMediaUpload.single('file'), (req, res) => {
+    const authContext = authenticateIoBrokerRequest(req, res);
+    if (!authContext) {
+        if (req.file?.path && fs.existsSync(req.file.path)) {
+            try { fs.unlinkSync(req.file.path); } catch (error) {}
+        }
+        return;
+    }
+
+    if (!req.file) {
+        return res.status(400).json({ success: false, message: 'Missing file upload' });
+    }
+
+    const body = req.body || {};
+    const caption = typeof body.caption === 'string' ? body.caption.trim() : '';
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    const severity = typeof body.severity === 'string' ? body.severity.trim() : 'info';
+    const source = typeof body.source === 'string' ? body.source.trim() : 'ioBroker';
+    const recipients = Array.isArray(body.recipients)
+        ? body.recipients.map(value => String(value).trim()).filter(Boolean)
+        : String(body.recipients || '')
+            .split(/[,\n;]/)
+            .map(value => value.trim())
+            .filter(Boolean);
+
+    if (!recipients.length) {
+        try { fs.unlinkSync(req.file.path); } catch (error) {}
+        return res.status(400).json({ success: false, message: 'Missing recipients' });
+    }
+
+    const recipientUsers = [];
+    const missingRecipients = [];
+
+    recipients.forEach((recipientValue) => {
+        const user = /^\d+$/.test(recipientValue)
+            ? db.prepare('SELECT id, uin, username, can_chat FROM users WHERE uin = ?').get(Number(recipientValue))
+            : db.prepare('SELECT id, uin, username, can_chat FROM users WHERE LOWER(username) = LOWER(?)').get(recipientValue);
+
+        if (!user) {
+            missingRecipients.push(recipientValue);
+            return;
+        }
+
+        if (authContext.ownerUser && !canUsersChat(authContext.ownerUser.id, user.id)) {
+            missingRecipients.push(recipientValue);
+            return;
+        }
+
+        recipientUsers.push(user);
+    });
+
+    if (!recipientUsers.length) {
+        try { fs.unlinkSync(req.file.path); } catch (error) {}
+        return res.status(400).json({ success: false, message: 'No valid recipients', missingRecipients });
+    }
+
+    const mediaType = detectMediaMessageType({
+        mimeType: req.file.mimetype,
+        originalName: req.file.originalname,
+        requestedType: body.type
+    });
+    const messageContent = caption || title || req.file.originalname || mediaType;
+
+    try {
+        const sent = recipientUsers.map((user) => {
+            const storedMessage = createStoredMessage({
+                senderId: authContext.integrationUser.id,
+                receiverId: user.id,
+                content: messageContent,
+                type: mediaType,
+                filename: req.file.filename,
+                severity
+            });
+
+            return {
+                userId: user.id,
+                uin: user.uin,
+                username: user.username,
+                messageId: storedMessage.id
+            };
+        });
+
+        if (authContext.integrationUser.can_chat !== 1) {
+            db.prepare('UPDATE users SET can_chat = 1 WHERE id = ?').run(authContext.integrationUser.id);
+        }
+        if (authContext.ownerUser) {
+            broadcastVisibleUserList(authContext.ownerUser.id);
+        } else {
+            broadcastVisibleUserList();
+        }
+
+        res.json({
+            success: true,
+            sender: {
+                id: authContext.integrationUser.id,
+                uin: authContext.integrationUser.uin,
+                username: authContext.integrationUser.username
+            },
+            file: {
+                filename: req.file.filename,
+                originalName: req.file.originalname,
+                type: mediaType,
+                mimetype: req.file.mimetype
+            },
+            sent,
+            missingRecipients
+        });
+    } catch (error) {
+        console.error('ioBroker integration media send failed:', error);
+        res.status(500).json({ success: false, message: 'Failed to send DRQ media message' });
     }
 });
 

@@ -608,6 +608,11 @@ body, html {
     margin-top: 5px;
 }
 
+.media-caption {
+    margin-bottom: 8px;
+    white-space: pre-wrap;
+}
+
 .timestamp {
     font-size: 0.7rem;
     color: #999;
