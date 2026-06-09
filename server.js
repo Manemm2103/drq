@@ -22,6 +22,7 @@ const legacyUploadsDir = path.join(__dirname, 'public/uploads');
 const legacyBackgroundsDir = path.join(__dirname, 'public/backgrounds');
 const iobrokerApiKey = String(process.env.IOBROKER_API_KEY || '').trim();
 const iobrokerSenderUsername = String(process.env.IOBROKER_SENDER_USERNAME || 'ioBroker').trim() || 'ioBroker';
+const integrationPresenceTimers = new Map();
 
 function ensureDir(dirPath) {
     if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
@@ -154,6 +155,29 @@ function generateIntegrationTokenValue() {
     return crypto.randomBytes(24).toString('hex');
 }
 
+function normalizeIntegrationUsernameInput(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    const sanitized = raw
+        .replace(/[^a-z0-9_-]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    if (!sanitized) return '';
+    return sanitized.startsWith('iobroker_') ? sanitized : `iobroker_${sanitized}`;
+}
+
+function allocateIntegrationUsername(preferredName = '') {
+    const normalizedPreferred = normalizeIntegrationUsernameInput(preferredName);
+    for (let attempts = 0; attempts < 40; attempts += 1) {
+        const candidate = attempts === 0 && normalizedPreferred
+            ? normalizedPreferred
+            : `iobroker_${generateIntegrationSuffix()}`;
+        const exists = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(candidate);
+        if (!exists) return candidate;
+    }
+    throw new Error('Could not allocate integration username');
+}
+
 function sendPushToUser(userId, payload) {
     const subs = db.prepare('SELECT subscription FROM push_subscriptions WHERE user_id = ?').all(userId);
     for (const subRow of subs) {
@@ -236,6 +260,28 @@ function broadcastVisibleUserList(userId = null) {
     onlineUserIds.forEach((onlineUserId) => {
         io.to(`user_${onlineUserId}`).emit('user_list', getVisibleUsersForUser(onlineUserId));
     });
+}
+
+function markIntegrationPresence(integrationUserId, ownerUserId = null) {
+    const integrationId = Number(integrationUserId);
+    if (!integrationId) return;
+
+    db.prepare('UPDATE users SET status = ? WHERE id = ?').run('online', integrationId);
+    broadcastVisibleUserList();
+
+    if (integrationPresenceTimers.has(integrationId)) {
+        clearTimeout(integrationPresenceTimers.get(integrationId));
+    }
+
+    const timer = setTimeout(() => {
+        integrationPresenceTimers.delete(integrationId);
+        const user = db.prepare('SELECT id, is_integration, owner_user_id FROM users WHERE id = ?').get(integrationId);
+        if (!user || Number(user.is_integration) !== 1) return;
+        db.prepare('UPDATE users SET status = ? WHERE id = ?').run('offline', integrationId);
+        broadcastVisibleUserList();
+    }, 90000);
+
+    integrationPresenceTimers.set(integrationId, timer);
 }
 
 function canUsersChat(userId, otherUserId) {
@@ -571,20 +617,7 @@ function ensurePersonalIntegrationUser(ownerUserId, preferredName = '') {
         throw new Error('Owner user not found');
     }
 
-    let username = '';
-    let attempts = 0;
-    while (!username && attempts < 20) {
-        const candidate = preferredName || `iobroker_${generateIntegrationSuffix()}`;
-        const exists = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(candidate);
-        if (!exists) {
-            username = candidate;
-        }
-        attempts += 1;
-    }
-
-    if (!username) {
-        throw new Error('Could not allocate integration username');
-    }
+    const username = allocateIntegrationUsername(preferredName);
 
     const passwordHash = bcrypt.hashSync(uuidv4(), 10);
     const uin = generateUIN();
@@ -741,6 +774,7 @@ function authenticateIoBrokerRequest(req, res) {
     }
 
     if (iobrokerApiKey && providedApiKey === iobrokerApiKey) {
+        markIntegrationPresence(iobrokerSenderUser.id, null);
         return {
             mode: 'legacy',
             ownerUser: null,
@@ -778,11 +812,17 @@ function authenticateIoBrokerRequest(req, res) {
     }
 
     if (!integrationUser) {
-        integrationUser = ensurePersonalIntegrationUser(ownerUser.id);
+        integrationUser = ensurePersonalIntegrationUser(ownerUser.id, tokenRecord.name || '');
         db.prepare('UPDATE integration_tokens SET integration_user_id = ? WHERE id = ?').run(integrationUser.id, tokenRecord.id);
     }
 
+    if (integrationUser.can_chat !== 1) {
+        db.prepare('UPDATE users SET can_chat = 1 WHERE id = ?').run(integrationUser.id);
+        integrationUser.can_chat = 1;
+    }
+
     db.prepare('UPDATE integration_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?').run(tokenRecord.id);
+    markIntegrationPresence(integrationUser.id, ownerUser.id);
 
     return {
         mode: 'personal',
@@ -1346,6 +1386,55 @@ app.post('/api/profile/:id/integrations/tokens/:tokenId/rotate', (req, res) => {
     res.json({ success: true, token });
 });
 
+app.put('/api/profile/:id/integrations/tokens/:tokenId', (req, res) => {
+    const userId = Number(req.params.id);
+    const requesterId = Number(req.body?.requesterId || userId);
+    const tokenId = Number(req.params.tokenId);
+    const requestedName = String(req.body?.name || '').trim();
+
+    if (userId !== requesterId) {
+        return res.status(403).json({ success: false, message: 'Nicht erlaubt' });
+    }
+
+    const token = db.prepare(`
+        SELECT id, name, integration_user_id
+        FROM integration_tokens
+        WHERE id = ? AND user_id = ?
+    `).get(tokenId, userId);
+
+    if (!token) {
+        return res.status(404).json({ success: false, message: 'API Key nicht gefunden' });
+    }
+
+    const normalizedName = normalizeIntegrationUsernameInput(requestedName);
+    if (!normalizedName) {
+        return res.status(400).json({ success: false, message: 'Bitte einen gueltigen Chatnamen angeben' });
+    }
+
+    if (token.integration_user_id) {
+        const exists = db.prepare(`
+            SELECT id
+            FROM users
+            WHERE LOWER(username) = LOWER(?)
+              AND id != ?
+        `).get(normalizedName, token.integration_user_id);
+
+        if (exists) {
+            return res.status(400).json({ success: false, message: 'Chatname ist bereits vergeben' });
+        }
+
+        db.prepare(`
+            UPDATE users
+            SET username = ?
+            WHERE id = ? AND owner_user_id = ?
+        `).run(normalizedName, token.integration_user_id, userId);
+    }
+
+    db.prepare('UPDATE integration_tokens SET name = ? WHERE id = ? AND user_id = ?').run(normalizedName, tokenId, userId);
+    broadcastVisibleUserList();
+    res.json({ success: true, name: normalizedName });
+});
+
 app.post('/api/profile/:id/integrations/tokens/:tokenId/toggle', (req, res) => {
     const userId = Number(req.params.id);
     const requesterId = Number(req.body?.requesterId || userId);
@@ -1356,12 +1445,69 @@ app.post('/api/profile/:id/integrations/tokens/:tokenId/toggle', (req, res) => {
         return res.status(403).json({ success: false, message: 'Nicht erlaubt' });
     }
 
+    const token = db.prepare(`
+        SELECT integration_user_id
+        FROM integration_tokens
+        WHERE id = ? AND user_id = ?
+    `).get(tokenId, userId);
+
     db.prepare(`
         UPDATE integration_tokens
         SET active = ?
         WHERE id = ? AND user_id = ?
     `).run(active, tokenId, userId);
 
+    if (token?.integration_user_id && active !== 1) {
+        db.prepare('UPDATE users SET status = ? WHERE id = ?').run('offline', token.integration_user_id);
+        const timer = integrationPresenceTimers.get(Number(token.integration_user_id));
+        if (timer) {
+            clearTimeout(timer);
+            integrationPresenceTimers.delete(Number(token.integration_user_id));
+        }
+    }
+
+    broadcastVisibleUserList();
+
+    res.json({ success: true });
+});
+
+app.delete('/api/profile/:id/integrations/tokens/:tokenId', (req, res) => {
+    const userId = Number(req.params.id);
+    const requesterId = Number(req.body?.requesterId || userId);
+    const tokenId = Number(req.params.tokenId);
+
+    if (userId !== requesterId) {
+        return res.status(403).json({ success: false, message: 'Nicht erlaubt' });
+    }
+
+    const token = db.prepare(`
+        SELECT id, integration_user_id
+        FROM integration_tokens
+        WHERE id = ? AND user_id = ?
+    `).get(tokenId, userId);
+
+    if (!token) {
+        return res.status(404).json({ success: false, message: 'API Key nicht gefunden' });
+    }
+
+    db.prepare('DELETE FROM integration_tokens WHERE id = ? AND user_id = ?').run(tokenId, userId);
+
+    if (token.integration_user_id) {
+        db.prepare(`
+            UPDATE users
+            SET can_chat = 0,
+                status = 'offline'
+            WHERE id = ? AND owner_user_id = ?
+        `).run(token.integration_user_id, userId);
+
+        const timer = integrationPresenceTimers.get(Number(token.integration_user_id));
+        if (timer) {
+            clearTimeout(timer);
+            integrationPresenceTimers.delete(Number(token.integration_user_id));
+        }
+    }
+
+    broadcastVisibleUserList();
     res.json({ success: true });
 });
 

@@ -30,6 +30,7 @@ let contactStateCache = {
     pendingOutgoing: [],
     rejected: []
 };
+let integrationTokensCache = [];
 
 const soundUhOh = document.getElementById('sound-uhoh');
 const soundRing = document.getElementById('sound-ring');
@@ -363,7 +364,8 @@ async function loadIntegrationTokens() {
         const res = await axios.get(`/api/profile/${currentUser.id}/integrations`, {
             params: { requesterId: currentUser.id }
         });
-        renderProfileEntityList('integration-token-list', res.data?.tokens || [], {
+        integrationTokensCache = res.data?.tokens || [];
+        renderProfileEntityList('integration-token-list', integrationTokensCache, {
             emptyText: 'Noch keine ioBroker Keys',
             meta: item => {
                 const label = item.integration_username ? `${item.integration_username}${item.integration_uin ? ` (DRQ#: ${item.integration_uin})` : ''}` : 'Noch nicht verbunden';
@@ -371,8 +373,10 @@ async function loadIntegrationTokens() {
                 return `${escapeHtml(item.name || 'Ohne Namen')} · ${escapeHtml(label)} · ${state}`;
             },
             actions: item => `
+                <button type="button" class="secondary-btn" onclick="renameIntegrationToken(${item.id})">Name</button>
                 <button type="button" onclick="rotateIntegrationToken(${item.id})">Neu</button>
                 <button type="button" class="secondary-btn" onclick="toggleIntegrationToken(${item.id}, ${item.active ? 'false' : 'true'})">${item.active ? 'Aus' : 'An'}</button>
+                <button type="button" class="secondary-btn" onclick="deleteIntegrationToken(${item.id})">Loeschen</button>
             `
         });
     } catch (err) {
@@ -420,6 +424,38 @@ async function toggleIntegrationToken(tokenId, active) {
         await loadIntegrationTokens();
     } catch (err) {
         alert(err.response?.data?.message || 'API Key konnte nicht umgeschaltet werden');
+    }
+}
+
+async function renameIntegrationToken(tokenId) {
+    const token = integrationTokensCache.find(item => Number(item.id) === Number(tokenId));
+    const currentName = token?.integration_username || token?.name || 'iobroker_';
+    const nextName = prompt('Neuer ioBroker-Chatname', currentName || 'iobroker_');
+    if (nextName === null) return;
+    try {
+        await axios.put(`/api/profile/${currentUser.id}/integrations/tokens/${tokenId}`, {
+            requesterId: currentUser.id,
+            name: nextName
+        });
+        await loadIntegrationTokens();
+        showToast('ioBroker', 'Chatname gespeichert', currentUser);
+    } catch (err) {
+        alert(err.response?.data?.message || 'Chatname konnte nicht gespeichert werden');
+    }
+}
+
+async function deleteIntegrationToken(tokenId) {
+    if (!confirm('API Key und zugehoerigen ioBroker-Chat wirklich entfernen?')) return;
+    try {
+        await axios.delete(`/api/profile/${currentUser.id}/integrations/tokens/${tokenId}`, {
+            data: { requesterId: currentUser.id }
+        });
+        await loadIntegrationTokens();
+        if (currentChatPartner && currentChatPartner.is_integration === 1 && Number(currentChatPartner.owner_user_id) === Number(currentUser.id)) {
+            closeChat();
+        }
+    } catch (err) {
+        alert(err.response?.data?.message || 'API Key konnte nicht geloescht werden');
     }
 }
 
@@ -783,6 +819,15 @@ let allUsersCache = [];
 
 socket.on('user_list', (users) => {
     allUsersCache = users;
+    if (currentChatPartner && (!currentChatPartner.kind || currentChatPartner.kind === 'user')) {
+        const refreshedPartner = allUsersCache.find(user => Number(user.id) === Number(currentChatPartner.id));
+        if (refreshedPartner) {
+            currentChatPartner = { ...currentChatPartner, ...refreshedPartner };
+            chatTitle.textContent = `${currentChatPartner.displayName || currentChatPartner.username} (${currentChatPartner.uin})`;
+            document.getElementById('chat-subtitle').textContent = getChatSubtitle(currentChatPartner);
+            document.getElementById('chat-status').className = `status-dot ${getContactIndicatorClass(currentChatPartner)}`;
+        }
+    }
     renderUserList();
 });
 
