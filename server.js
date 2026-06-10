@@ -1274,6 +1274,71 @@ app.get('/api/integrations/iobroker/inbox', (req, res) => {
     }
 });
 
+app.get('/api/integrations/iobroker/outbox-status', (req, res) => {
+    const authContext = authenticateIoBrokerRequest(req, res);
+    if (!authContext) {
+        return;
+    }
+
+    const messageIds = String(req.query.messageIds || '')
+        .split(/[,\s;]+/)
+        .map(value => Number.parseInt(value, 10))
+        .filter(value => Number.isInteger(value) && value > 0)
+        .slice(0, 50);
+
+    if (!messageIds.length) {
+        return res.json({ success: true, messages: [] });
+    }
+
+    try {
+        const placeholders = messageIds.map(() => '?').join(', ');
+        const rows = db.prepare(`
+            SELECT
+                m.id,
+                m.sender_id,
+                m.receiver_id,
+                m.content,
+                m.type,
+                m.severity,
+                m.timestamp,
+                m.delivered_at,
+                m.is_read,
+                u.uin AS receiver_uin,
+                u.username AS receiver_username
+            FROM messages m
+            LEFT JOIN users u ON u.id = m.receiver_id
+            WHERE m.sender_id = ?
+              AND m.id IN (${placeholders})
+            ORDER BY m.id ASC
+        `).all(authContext.integrationUser.id, ...messageIds);
+
+        return res.json({
+            success: true,
+            sender: {
+                id: authContext.integrationUser.id,
+                uin: authContext.integrationUser.uin,
+                username: authContext.integrationUser.username
+            },
+            messages: rows.map((message) => ({
+                id: Number(message.id),
+                senderId: Number(message.sender_id),
+                receiverId: Number(message.receiver_id),
+                receiverUsername: message.receiver_username || '',
+                receiverUin: message.receiver_uin != null ? Number(message.receiver_uin) : null,
+                content: message.content || '',
+                type: message.type || 'text',
+                severity: message.severity || '',
+                timestamp: message.timestamp || null,
+                deliveredAt: message.delivered_at || null,
+                isRead: Number(message.is_read || 0) === 1
+            }))
+        });
+    } catch (error) {
+        console.error('ioBroker integration outbox status failed:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch DRQ outbox status' });
+    }
+});
+
 // Login
 app.post('/api/login', (req, res) => {
     const rawUsername = typeof req.body?.username === 'string' ? req.body.username : '';
