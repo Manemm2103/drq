@@ -1,6 +1,6 @@
 {
   "name": "drq",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DRQ chat application",
   "main": "server.js",
   "scripts": {

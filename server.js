@@ -9,6 +9,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const ogs = require('open-graph-scraper');
+const appPackage = require('./package.json');
 
 const webpush = require('web-push');
 
@@ -971,7 +972,7 @@ app.delete('/api/call-debug', (req, res) => {
 
 app.get('/api/runtime-config', (req, res) => {
     res.json({
-        version: 'Version 2026-06-04.7',
+        version: `Version ${appPackage.version}`,
         rtcConfig: buildRtcConfig()
     });
 });
