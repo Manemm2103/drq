@@ -65,6 +65,8 @@
                     </div>
                 </div>
                 <div class="header-actions" style="margin-left: auto; display: flex; gap: 10px;">
+                    <button id="chat-clear-btn" class="chat-toolbar-btn" style="display:none;" onclick="clearCurrentChatHistory()" title="Chatverlauf leeren">Verlauf leeren</button>
+                    <button id="chat-remove-btn" class="chat-toolbar-btn danger" style="display:none;" onclick="removeCurrentFriend()" title="Freund entfernen">Freund entfernen</button>
                     <button id="chat-mute-btn" class="icon-btn" style="display:none;" onclick="toggleChatActionsMenu()" title="Chat Optionen">🔕</button>
                     <button id="chat-search-btn" class="icon-btn chat-search-btn" style="display:none;" onclick="toggleChatSearch()" title="Im Chat suchen">🔎</button>
                     <button id="call-audio-btn" class="icon-btn" style="display:none;" onclick="startCall(false)" title="Sprachanruf">📞</button>
@@ -76,7 +78,6 @@
                 <button type="button" onclick="muteCurrentChat(24)">24h stumm</button>
                 <button type="button" onclick="muteCurrentChat('forever')">Immer stumm</button>
                 <button type="button" onclick="unmuteCurrentChat()">Stumm aus</button>
-                <button type="button" class="danger" onclick="clearCurrentChatHistory()">Verlauf leeren</button>
             </div>
             <div id="chat-search-panel" class="chat-search-panel" style="display:none;">
                 <div class="chat-search-toolbar">

@@ -398,6 +398,31 @@ function canUsersChat(userId, otherUserId) {
     return !!accepted;
 }
 
+function hasContactRecordBetweenUsers(userId, otherUserId, statuses = []) {
+    const params = [Number(userId), Number(otherUserId), Number(otherUserId), Number(userId)];
+    let sql = `
+        SELECT id, status, requester_id, addressee_id
+        FROM contacts
+        WHERE (
+                (requester_id = ? AND addressee_id = ?)
+                OR (requester_id = ? AND addressee_id = ?)
+              )
+    `;
+
+    if (Array.isArray(statuses) && statuses.length) {
+        sql += ` AND status IN (${statuses.map(() => '?').join(', ')})`;
+        params.push(...statuses.map((status) => String(status)));
+    }
+
+    sql += ' LIMIT 1';
+    return db.prepare(sql).get(...params);
+}
+
+function canUsersAccessStoredChat(userId, otherUserId) {
+    if (canUsersChat(userId, otherUserId)) return true;
+    return !!hasContactRecordBetweenUsers(userId, otherUserId, ['pending', 'rejected', 'accepted']);
+}
+
 function createStoredMessage({ senderId, receiverId, content, type = 'text', filename = null, replyToId = null, isEncrypted = 0, severity = '' }) {
     const deliveredAt = isUserOnline(receiverId) ? new Date().toISOString() : null;
     const normalizedSeverity = typeof severity === 'string' ? severity.trim().toLowerCase() : '';
@@ -1588,6 +1613,7 @@ app.delete('/api/profile/:id/contacts/:contactId', (req, res) => {
     const userId = Number(req.params.id);
     const requesterId = Number(req.body?.requesterId || userId);
     const contactId = Number(req.params.contactId);
+    const clearHistory = req.body?.clearHistory === true;
 
     if (userId !== requesterId) {
         return res.status(403).json({ success: false, message: 'Nicht erlaubt' });
@@ -1606,8 +1632,53 @@ app.delete('/api/profile/:id/contacts/:contactId', (req, res) => {
         return res.status(404).json({ success: false, message: 'Eintrag nicht gefunden' });
     }
 
-    if (!['rejected', 'pending'].includes(String(contact.status || ''))) {
-        return res.status(400).json({ success: false, message: 'Nur offene oder abgelehnte Anfragen koennen geloescht werden' });
+    const contactStatus = String(contact.status || '');
+    const otherUserId = Number(contact.requester_id) === userId
+        ? Number(contact.addressee_id)
+        : Number(contact.requester_id);
+
+    if (contactStatus === 'accepted') {
+        if (clearHistory) {
+            db.prepare(`
+                DELETE FROM messages
+                WHERE (sender_id = ? AND receiver_id = ?)
+                   OR (sender_id = ? AND receiver_id = ?)
+            `).run(userId, otherUserId, otherUserId, userId);
+
+            db.prepare('DELETE FROM contacts WHERE id = ?').run(contactId);
+        } else {
+            db.prepare(`
+                UPDATE contacts
+                SET status = 'rejected',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `).run(contactId);
+        }
+
+        const affectedUserIds = [...new Set([contact.requester_id, contact.addressee_id].map(Number).filter(Boolean))];
+        affectedUserIds.forEach((affectedUserId) => {
+            io.to(`user_${affectedUserId}`).emit('contacts_updated');
+            broadcastVisibleUserList(affectedUserId);
+        });
+
+        return res.json({
+            success: true,
+            removedFriend: true,
+            clearedHistory: clearHistory,
+            remainingEntry: clearHistory ? 'none' : 'rejected'
+        });
+    }
+
+    if (!['rejected', 'pending'].includes(contactStatus)) {
+        return res.status(400).json({ success: false, message: 'Dieser Kontakt kann gerade nicht entfernt werden' });
+    }
+
+    if (clearHistory) {
+        db.prepare(`
+            DELETE FROM messages
+            WHERE (sender_id = ? AND receiver_id = ?)
+               OR (sender_id = ? AND receiver_id = ?)
+        `).run(userId, otherUserId, otherUserId, userId);
     }
 
     db.prepare('DELETE FROM contacts WHERE id = ?').run(contactId);
@@ -1655,7 +1726,7 @@ app.post('/api/profile/:id/chats/:contactId/mute', (req, res) => {
     if (userId !== requesterId) {
         return res.status(403).json({ success: false, message: 'Nicht erlaubt' });
     }
-    if (!canUsersChat(userId, contactId)) {
+    if (!canUsersAccessStoredChat(userId, contactId)) {
         return res.status(403).json({ success: false, message: 'Chat nicht erlaubt' });
     }
 
@@ -1701,7 +1772,7 @@ app.delete('/api/profile/:id/chats/:contactId/history', (req, res) => {
     if (userId !== requesterId) {
         return res.status(403).json({ success: false, message: 'Nicht erlaubt' });
     }
-    if (!canUsersChat(userId, contactId)) {
+    if (!canUsersAccessStoredChat(userId, contactId)) {
         return res.status(403).json({ success: false, message: 'Chat nicht erlaubt' });
     }
 

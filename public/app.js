@@ -26,6 +26,7 @@ let runtimeVersionLabel = 'Version 1.0.1';
 let currentChatMessages = [];
 let activeSearchTab = 'text';
 let contactStateCache = {
+    accepted: [],
     pendingIncoming: [],
     pendingOutgoing: [],
     rejected: []
@@ -265,6 +266,7 @@ async function loadContactState() {
         });
         const data = res.data || {};
         contactStateCache = {
+            accepted: data.accepted || [],
             pendingIncoming: data.pendingIncoming || [],
             pendingOutgoing: data.pendingOutgoing || [],
             rejected: data.rejected || []
@@ -286,7 +288,10 @@ async function loadContactState() {
         });
         renderProfileEntityList('accepted-contacts-list', data.accepted || [], {
             emptyText: 'Noch keine Kontakte',
-            meta: item => `DRQ#: ${item.uin}`
+            meta: item => `DRQ#: ${item.uin}`,
+            actions: item => `
+                <button type="button" class="secondary-btn" onclick="promptRemoveAcceptedContact(${item.user_id})">Entfernen</button>
+            `
         });
         renderUserList();
     } catch (err) {
@@ -400,6 +405,66 @@ async function deleteContactRequest(contactId) {
     } catch (err) {
         alert(err.response?.data?.message || 'Eintrag konnte nicht geloescht werden');
     }
+}
+
+function getAcceptedContactEntryByUserId(userId) {
+    return (contactStateCache.accepted || []).find((item) => Number(item.user_id) === Number(userId)) || null;
+}
+
+function getChatTargetUserId(entry) {
+    if (!entry) return 0;
+    return Number(entry.user_id || entry.id || 0);
+}
+
+async function removeAcceptedContact(contactId, userId, options = {}) {
+    const clearHistory = options.clearHistory === true;
+    try {
+        await axios.delete(`/api/profile/${currentUser.id}/contacts/${contactId}`, {
+            data: {
+                requesterId: currentUser.id,
+                clearHistory
+            }
+        });
+
+        if (clearHistory) {
+            unreadCounts[String(userId)] = 0;
+            saveUnread();
+            updateGlobalUnreadBadge();
+        }
+
+        await loadContactState();
+
+        if (currentChatPartner && Number(getChatTargetUserId(currentChatPartner)) === Number(userId)) {
+            if (clearHistory) {
+                closeChat();
+            } else {
+                const rejectedEntry = (contactStateCache.rejected || []).find((item) => Number(item.user_id) === Number(userId));
+                if (rejectedEntry) {
+                    openChat({
+                        ...rejectedEntry,
+                        kind: 'contact_request_rejected',
+                        requestState: 'rejected',
+                        displayName: rejectedEntry.username
+                    });
+                } else {
+                    closeChat();
+                }
+            }
+        }
+    } catch (err) {
+        alert(err.response?.data?.message || 'Freund konnte nicht entfernt werden');
+    }
+}
+
+async function promptRemoveAcceptedContact(userId) {
+    const acceptedEntry = getAcceptedContactEntryByUserId(userId);
+    if (!acceptedEntry) {
+        return alert('Freundschaftseintrag wurde nicht gefunden.');
+    }
+
+    if (!confirm(`Freund ${acceptedEntry.username} wirklich entfernen?`)) return;
+    const clearHistory = confirm('Soll auch der bisherige Verlauf geloescht werden?\n\nOK = Verlauf loeschen\nAbbrechen = Verlauf behalten');
+    await removeAcceptedContact(acceptedEntry.id, acceptedEntry.user_id, { clearHistory });
 }
 
 async function loadIntegrationTokens() {
@@ -999,7 +1064,7 @@ function getContactMetaLabel(entry) {
 function getContactListSubtitle(entry) {
     if (entry.requestState === 'pending') return 'Kontaktanfrage wartet auf deine Entscheidung';
     if (entry.requestState === 'outgoing') return 'Anfrage gesendet';
-    if (entry.requestState === 'rejected') return 'Anfrage abgelehnt';
+    if (entry.requestState === 'rejected') return 'Nicht mehr befreundet';
     return entry.custom_status || '';
 }
 
@@ -1300,15 +1365,37 @@ function closeChatActionsMenu() {
 
 function updateChatMuteUi() {
     const muteBtn = document.getElementById('chat-mute-btn');
+    const clearBtn = document.getElementById('chat-clear-btn');
+    const removeBtn = document.getElementById('chat-remove-btn');
     if (!muteBtn) return;
-    if (!currentChatPartner || currentChatPartner.kind) {
+    if (clearBtn) clearBtn.style.display = 'none';
+    if (removeBtn) removeBtn.style.display = 'none';
+
+    if (!currentChatPartner) {
         muteBtn.style.display = 'none';
         closeChatActionsMenu();
         return;
     }
-    muteBtn.style.display = 'inline-flex';
-    muteBtn.textContent = isChatMuted(currentChatPartner.id) ? '🔕' : '🔔';
-    muteBtn.title = isChatMuted(currentChatPartner.id) ? 'Chat ist stumm' : 'Chat Optionen';
+
+    const canMute = !currentChatPartner.kind;
+    const canClear = !currentChatPartner.kind || currentChatPartner.requestState === 'rejected';
+    const canRemove = !currentChatPartner.kind;
+
+    muteBtn.style.display = canMute ? 'inline-flex' : 'none';
+    if (canMute) {
+        muteBtn.textContent = isChatMuted(currentChatPartner.id) ? '🔕' : '🔔';
+        muteBtn.title = isChatMuted(currentChatPartner.id) ? 'Chat ist stumm' : 'Chat Optionen';
+    } else {
+        closeChatActionsMenu();
+    }
+
+    if (clearBtn && canClear) {
+        clearBtn.style.display = 'inline-flex';
+    }
+
+    if (removeBtn && canRemove) {
+        removeBtn.style.display = 'inline-flex';
+    }
 }
 
 async function muteCurrentChat(mode) {
@@ -1340,22 +1427,33 @@ async function unmuteCurrentChat() {
 }
 
 async function clearCurrentChatHistory() {
-    if (!currentChatPartner || currentChatPartner.kind) return;
+    if (!currentChatPartner) return;
+    const targetUserId = getChatTargetUserId(currentChatPartner);
+    if (!targetUserId) return;
     if (!confirm(`Chatverlauf mit ${currentChatPartner.username} wirklich leeren?`)) return;
     try {
-        await axios.delete(`/api/profile/${currentUser.id}/chats/${currentChatPartner.id}/history`, {
+        await axios.delete(`/api/profile/${currentUser.id}/chats/${targetUserId}/history`, {
             data: { requesterId: currentUser.id }
         });
         currentChatMessages = [];
-        unreadCounts[currentChatPartner.id] = 0;
+        unreadCounts[String(targetUserId)] = 0;
         saveUnread();
-        renderCurrentChatMessages();
+        if (currentChatPartner.kind && currentChatPartner.requestState === 'rejected') {
+            closeChat();
+        } else {
+            renderCurrentChatMessages();
+        }
         renderUserList();
         updateGlobalUnreadBadge();
         closeChatActionsMenu();
     } catch (err) {
         alert(err.response?.data?.message || 'Chatverlauf konnte nicht geleert werden');
     }
+}
+
+async function removeCurrentFriend() {
+    if (!currentChatPartner || currentChatPartner.kind) return;
+    await promptRemoveAcceptedContact(currentChatPartner.id);
 }
 
 function showContactList() {
@@ -1568,7 +1666,7 @@ function renderContactRequestChat(user) {
         ? 'moechte dich als Kontakt hinzufuegen.'
         : user.requestState === 'outgoing'
             ? 'hat deine Anfrage noch nicht bestaetigt.'
-            : 'ist als inaktiver Kontakt gespeichert.';
+            : 'ist nicht mehr mit dir befreundet.';
 
     const actions = [];
     if (user.requestState === 'pending') {

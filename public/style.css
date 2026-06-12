@@ -1599,6 +1599,26 @@ input:checked + .slider:before { transform: translateX(20px); }
     color: #991b1b;
 }
 
+.chat-toolbar-btn {
+    border: none;
+    border-radius: 8px;
+    background: #f3f4f6;
+    color: #111827;
+    padding: 8px 12px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.chat-toolbar-btn:hover {
+    background: #e5e7eb;
+}
+
+.chat-toolbar-btn.danger {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
 
 /* --- Typing Indicator --- */
 .typing-indicator {
