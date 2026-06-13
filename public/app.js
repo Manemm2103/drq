@@ -122,6 +122,7 @@ function restoreSession(user) {
     currentUser = user;
     document.getElementById('my-username').textContent = getVisibleName(currentUser);
     document.getElementById('my-uin').textContent = `DRQ-Nummer: ${currentUser.uin || '-'}`;
+    document.getElementById('my-status').textContent = currentUser.custom_status || '-';
     applyUiTheme(currentUser.theme_key);
 
     const pushButton = document.getElementById('enable-push-btn');

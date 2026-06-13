@@ -245,6 +245,16 @@ body, html {
     text-overflow: ellipsis;
 }
 
+#my-status {
+    font-size: 0.75rem;
+    color: var(--muted-text);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-style: italic;
+}
+
 .avatar {
     width: 40px;
     height: 40px;
