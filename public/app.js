@@ -61,10 +61,13 @@ function applyUiTheme(themeKey) {
     const nextTheme = String(themeKey || 'graphite').trim() || 'graphite';
     document.body.dataset.theme = nextTheme;
     const themeMeta = document.querySelector('meta[name="theme-color"]');
-    const computed = getComputedStyle(document.documentElement);
+    const computed = getComputedStyle(document.body);
     const shellColor = computed.getPropertyValue('--shell-bg').trim();
     if (themeMeta && shellColor) {
         themeMeta.setAttribute('content', shellColor);
+    }
+    if (currentUser) {
+        applyChatBackground(currentUser.chat_bg);
     }
 }
 
@@ -713,7 +716,7 @@ function applyChatBackground(bg) {
     
     if (!bg || bg === 'default') {
         mainApp.style.backgroundImage = 'none';
-        mainApp.style.backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--app-shell').trim() || '#e5ddd5';
+        mainApp.style.backgroundColor = getComputedStyle(document.body).getPropertyValue('--app-shell').trim() || '#e5ddd5';
     } else {
         if (bg.includes('url') || bg.includes('gradient')) {
             mainApp.style.backgroundImage = bg;
@@ -1224,6 +1227,35 @@ function getSearchableText(msg) {
     return msg.content || '';
 }
 
+function getUploadUrl(filename) {
+    return `/uploads/${filename}`;
+}
+
+function getFirstUrl(text) {
+    const match = String(text || '').match(/https?:\/\/[^\s]+/i);
+    return match ? match[0] : '';
+}
+
+function getDocExtension(filename) {
+    const match = String(filename || '').toLowerCase().match(/\.([a-z0-9]+)$/i);
+    return match ? match[1] : '';
+}
+
+function getDocLabel(filename) {
+    const ext = getDocExtension(filename);
+    if (ext === 'pdf') return 'PDF';
+    if (['doc', 'docx'].includes(ext)) return 'Word';
+    if (['xls', 'xlsx', 'csv'].includes(ext)) return 'Excel';
+    if (['ppt', 'pptx'].includes(ext)) return 'PPT';
+    if (['txt', 'log', 'json', 'xml', 'yaml', 'yml', 'md'].includes(ext)) return 'Text';
+    if (['zip', 'rar', '7z'].includes(ext)) return 'Archiv';
+    return ext ? ext.toUpperCase() : 'Datei';
+}
+
+function formatGalleryFilename(filename, fallback = '') {
+    return escapeHtml(String(filename || fallback || '').trim() || 'Datei');
+}
+
 function formatSearchPreview(msg) {
     if (msg.type === 'image') return 'Bild';
     if (msg.type === 'video') return 'Video';
@@ -1233,8 +1265,98 @@ function formatSearchPreview(msg) {
     return msg.content || '';
 }
 
+function renderSearchResultMarkup(msg) {
+    const title = new Date(msg.timestamp).toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const safeTitle = escapeHtml(title);
+
+    if (activeSearchTab === 'media') {
+        if (msg.type === 'image') {
+            return `
+                <button class="search-result-item gallery-card media-card" onclick="jumpToMessage(${msg.id})">
+                    <div class="gallery-thumb-wrap">
+                        <img class="gallery-thumb" src="${getUploadUrl(msg.filename)}" alt="${formatGalleryFilename(msg.filename, 'Bild')}">
+                    </div>
+                    <div class="gallery-meta">
+                        <div class="gallery-name">${formatGalleryFilename(msg.filename, 'Bild')}</div>
+                        <div class="gallery-time">${safeTitle}</div>
+                    </div>
+                </button>
+            `;
+        }
+        if (msg.type === 'video') {
+            return `
+                <button class="search-result-item gallery-card media-card" onclick="jumpToMessage(${msg.id})">
+                    <div class="gallery-thumb-wrap video-thumb-wrap">
+                        <video class="gallery-thumb" src="${getUploadUrl(msg.filename)}" muted playsinline preload="metadata"></video>
+                        <span class="gallery-badge">Video</span>
+                    </div>
+                    <div class="gallery-meta">
+                        <div class="gallery-name">${formatGalleryFilename(msg.filename, 'Video')}</div>
+                        <div class="gallery-time">${safeTitle}</div>
+                    </div>
+                </button>
+            `;
+        }
+        return `
+            <button class="search-result-item gallery-card media-card audio-card" onclick="jumpToMessage(${msg.id})">
+                <div class="gallery-icon">🎧</div>
+                <div class="gallery-meta">
+                    <div class="gallery-name">${formatGalleryFilename(msg.filename, 'Audio')}</div>
+                    <div class="gallery-time">${safeTitle}</div>
+                </div>
+            </button>
+        `;
+    }
+
+    if (activeSearchTab === 'docs') {
+        return `
+            <button class="search-result-item gallery-card doc-card" onclick="jumpToMessage(${msg.id})">
+                <div class="doc-thumb">
+                    <span class="doc-thumb-label">${escapeHtml(getDocLabel(msg.filename))}</span>
+                </div>
+                <div class="gallery-meta">
+                    <div class="gallery-name">${formatGalleryFilename(msg.filename, 'Dokument')}</div>
+                    <div class="gallery-time">${safeTitle}</div>
+                </div>
+            </button>
+        `;
+    }
+
+    if (activeSearchTab === 'links') {
+        const url = getFirstUrl(msg.content);
+        let hostname = '';
+        let pathLabel = url;
+        try {
+            const parsed = new URL(url);
+            hostname = parsed.hostname;
+            pathLabel = `${parsed.pathname || '/'}${parsed.search || ''}` || '/';
+        } catch (err) {}
+        return `
+            <button class="search-result-item link-card" onclick="jumpToMessage(${msg.id})">
+                <div class="link-card-head">
+                    <div class="link-site-badge">${escapeHtml((hostname || 'Link').slice(0, 1).toUpperCase())}</div>
+                    <div class="link-card-copy">
+                        <div class="link-card-site">${escapeHtml(hostname || 'Link')}</div>
+                        <div class="link-card-path">${escapeHtml(pathLabel)}</div>
+                    </div>
+                </div>
+                <div class="link-card-url">${escapeHtml(url)}</div>
+                <div class="gallery-time">${safeTitle}</div>
+            </button>
+        `;
+    }
+
+    return `
+        <button class="search-result-item" onclick="jumpToMessage(${msg.id})">
+            <div class="search-result-title">${safeTitle}</div>
+            <div class="search-result-snippet">${escapeHtml(formatSearchPreview(msg).substring(0, 140))}</div>
+        </button>
+    `;
+}
+
 function updateChatSearch() {
     if (!chatSearchResults) return;
+    chatSearchResults.classList.toggle('is-gallery', activeSearchTab === 'media' || activeSearchTab === 'docs' || activeSearchTab === 'links');
     if (!currentChatPartner) {
         chatSearchResults.innerHTML = '<div class="search-empty">Kein Chat geöffnet.</div>';
         return;
@@ -1256,15 +1378,8 @@ function updateChatSearch() {
         return;
     }
 
-    chatSearchResults.innerHTML = results.slice().reverse().map((msg) => {
-        const title = new Date(msg.timestamp).toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-        return `
-            <button class="search-result-item" onclick="jumpToMessage(${msg.id})">
-                <div class="search-result-title">${title}</div>
-                <div class="search-result-snippet">${escapeHtml(formatSearchPreview(msg).substring(0, 140))}</div>
-            </button>
-        `;
-    }).join('');
+    chatSearchResults.classList.toggle('is-gallery', activeSearchTab === 'media' || activeSearchTab === 'docs' || activeSearchTab === 'links');
+    chatSearchResults.innerHTML = results.slice().reverse().map((msg) => renderSearchResultMarkup(msg)).join('');
 }
 
 function jumpToMessage(messageId) {
