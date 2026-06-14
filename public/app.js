@@ -21,7 +21,7 @@ const replyContent = document.getElementById('reply-preview-content');
 let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
-let runtimeVersionLabel = 'Version 1.1.5';
+let runtimeVersionLabel = 'Version 1.1.6';
 let currentChatMessages = [];
 let activeSearchTab = 'text';
 let contactStateCache = {
@@ -2025,12 +2025,17 @@ function getCallConstraints(wantVideo) {
     return {
         audio: {
             echoCancellation: true,
-            noiseSuppression: true
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: { ideal: 2 },
+            sampleRate: { ideal: 48000 },
+            sampleSize: { ideal: 16 }
         },
         video: wantVideo ? {
             facingMode: 'user',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
+            width: { ideal: 1920, min: 640 },
+            height: { ideal: 1080, min: 360 },
+            frameRate: { ideal: 30, min: 15 }
         } : false
     };
 }
@@ -2085,6 +2090,39 @@ function clearCallFailureTimer() {
     if (callFailureTimer) {
         clearTimeout(callFailureTimer);
         callFailureTimer = null;
+    }
+}
+
+async function applyPreferredSenderParameters() {
+    if (!peerConnection || !peerConnection.getSenders) return;
+    const senders = peerConnection.getSenders();
+
+    for (const sender of senders) {
+        if (!sender || !sender.track || typeof sender.getParameters !== 'function' || typeof sender.setParameters !== 'function') {
+            continue;
+        }
+
+        const params = sender.getParameters() || {};
+        if (!params.encodings || !params.encodings.length) {
+            params.encodings = [{}];
+        }
+
+        if (sender.track.kind === 'video') {
+            params.encodings[0].maxBitrate = 2_500_000;
+            params.encodings[0].maxFramerate = 30;
+            params.degradationPreference = 'maintain-resolution';
+        }
+
+        if (sender.track.kind === 'audio') {
+            params.encodings[0].maxBitrate = 128_000;
+            params.degradationPreference = 'maintain-framerate';
+        }
+
+        try {
+            await sender.setParameters(params);
+        } catch (err) {
+            console.warn('Could not apply sender parameters', err);
+        }
     }
 }
 
@@ -2239,6 +2277,7 @@ async function startCall(video = true) {
         await prepareLocalMedia(callWantsVideo);
         createPeerConnection(currentChatPartner.id, null);
         localStream.getTracks().forEach((track) => peerConnection.addTrack(track, localStream));
+        await applyPreferredSenderParameters();
 
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
@@ -2291,6 +2330,7 @@ async function acceptCall() {
         await prepareLocalMedia(callWantsVideo);
         createPeerConnection(incomingCallData.from, incomingCallData.fromSocketId || null);
         localStream.getTracks().forEach((track) => peerConnection.addTrack(track, localStream));
+        await applyPreferredSenderParameters();
 
         await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingCallData.signal));
         await flushPendingIceCandidates();
