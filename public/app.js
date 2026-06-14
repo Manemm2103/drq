@@ -21,7 +21,7 @@ const replyContent = document.getElementById('reply-preview-content');
 let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
-let runtimeVersionLabel = 'Version 1.1.2';
+let runtimeVersionLabel = 'Version 1.1.3';
 let currentChatMessages = [];
 let activeSearchTab = 'text';
 let contactStateCache = {
@@ -2008,6 +2008,7 @@ let activeCallPartnerId = null;
 let activeCallTargetSocketId = null;
 let pendingIceCandidates = [];
 let callWantsVideo = false;
+let callFailureTimer = null;
 
 function ensureCallVideoPlayback(videoEl, muted = false) {
     if (!videoEl) return;
@@ -2080,6 +2081,13 @@ function resetCallUi() {
     }
 }
 
+function clearCallFailureTimer() {
+    if (callFailureTimer) {
+        clearTimeout(callFailureTimer);
+        callFailureTimer = null;
+    }
+}
+
 function canStartCallWithPartner() {
     if (!currentChatPartner) return false;
     if (currentChatPartner.kind && currentChatPartner.kind !== 'user') {
@@ -2101,10 +2109,11 @@ function createPeerConnection(targetUserId, targetSocketId = null) {
     pendingIceCandidates = [];
 
     peerConnection.onicecandidate = (event) => {
+        if (!event.candidate) return;
         socket.emit('ice_candidate', {
             to: targetUserId,
             toSocketId: targetSocketId || activeCallTargetSocketId || null,
-            candidate: event.candidate || null
+            candidate: event.candidate
         });
     };
 
@@ -2126,14 +2135,42 @@ function createPeerConnection(targetUserId, targetSocketId = null) {
 
     peerConnection.onconnectionstatechange = () => {
         const state = peerConnection.connectionState;
+        if (state === 'new') updateCallOverlayMeta(null, 'Verbindung wird vorbereitet...');
         if (state === 'connecting') updateCallOverlayMeta(null, 'Verbindung wird aufgebaut...');
-        if (state === 'connected') updateCallOverlayMeta(null, callWantsVideo ? 'Verbunden' : 'Sprachanruf aktiv');
+        if (state === 'connected') {
+            clearCallFailureTimer();
+            updateCallOverlayMeta(null, callWantsVideo ? 'Verbunden' : 'Sprachanruf aktiv');
+        }
         if (state === 'disconnected') updateCallOverlayMeta(null, 'Verbindung unterbrochen');
         if (state === 'failed') {
             updateCallOverlayMeta(null, 'Verbindung fehlgeschlagen');
-            setTimeout(() => endCall(true), 600);
+            clearCallFailureTimer();
+            callFailureTimer = setTimeout(() => {
+                if (peerConnection && peerConnection.connectionState === 'failed') {
+                    endCall(true);
+                }
+            }, 4000);
         }
         if (state === 'closed') endCall(true);
+    };
+
+    peerConnection.oniceconnectionstatechange = () => {
+        const state = peerConnection.iceConnectionState;
+        if (state === 'checking') updateCallOverlayMeta(null, 'Netzwerk wird verbunden...');
+        if (state === 'connected' || state === 'completed') {
+            clearCallFailureTimer();
+            updateCallOverlayMeta(null, callWantsVideo ? 'Verbunden' : 'Sprachanruf aktiv');
+        }
+        if (state === 'disconnected') updateCallOverlayMeta(null, 'Netzwerk kurz unterbrochen...');
+        if (state === 'failed') {
+            clearCallFailureTimer();
+            callFailureTimer = setTimeout(() => {
+                if (peerConnection && peerConnection.iceConnectionState === 'failed') {
+                    updateCallOverlayMeta(null, 'Verbindung fehlgeschlagen');
+                    endCall(true);
+                }
+            }, 4000);
+        }
     };
 }
 
@@ -2141,12 +2178,33 @@ async function flushPendingIceCandidates() {
     if (!peerConnection || !peerConnection.remoteDescription) return;
     while (pendingIceCandidates.length) {
         const candidate = pendingIceCandidates.shift();
+        if (!candidate) continue;
         try {
-            await peerConnection.addIceCandidate(candidate ? new RTCIceCandidate(candidate) : null);
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (err) {
             console.warn('ICE candidate ignored', err);
         }
     }
+}
+
+async function waitForIceGatheringComplete() {
+    if (!peerConnection) return;
+    if (peerConnection.iceGatheringState === 'complete') return;
+    const timeoutMs = rtcConfig.iceTransportPolicy === 'relay' ? 5000 : 1800;
+    await new Promise((resolve) => {
+        const finish = () => {
+            clearTimeout(timer);
+            peerConnection.removeEventListener('icegatheringstatechange', onStateChange);
+            resolve();
+        };
+        const onStateChange = () => {
+            if (peerConnection && peerConnection.iceGatheringState === 'complete') {
+                finish();
+            }
+        };
+        const timer = setTimeout(finish, timeoutMs);
+        peerConnection.addEventListener('icegatheringstatechange', onStateChange);
+    });
 }
 
 async function prepareLocalMedia(wantVideo) {
@@ -2184,6 +2242,7 @@ async function startCall(video = true) {
 
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
+        await waitForIceGatheringComplete();
 
         socket.emit('call_user', {
             userToCall: currentChatPartner.id,
@@ -2238,6 +2297,7 @@ async function acceptCall() {
 
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
+        await waitForIceGatheringComplete();
 
         socket.emit('answer_call', {
             signal: peerConnection.localDescription,
@@ -2281,12 +2341,13 @@ socket.on('call_routed', (data) => {
 });
 
 socket.on('ice_candidate', async (candidate) => {
+    if (!candidate) return;
     if (!peerConnection || !peerConnection.remoteDescription) {
         pendingIceCandidates.push(candidate);
         return;
     }
     try {
-        await peerConnection.addIceCandidate(candidate ? new RTCIceCandidate(candidate) : null);
+        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
     } catch (err) {
         console.warn('Error adding ICE candidate', err);
     }
@@ -2322,6 +2383,7 @@ function endCall(isRemote = false) {
     activeCallTargetSocketId = null;
     pendingIceCandidates = [];
     callWantsVideo = false;
+    clearCallFailureTimer();
 
     if (soundRing) {
         soundRing.pause();
