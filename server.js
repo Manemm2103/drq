@@ -90,7 +90,7 @@ function buildRtcIceServers() {
 
 function buildRtcConfig() {
     const iceServers = buildRtcIceServers();
-    const iceTransportPolicy = process.env.RTC_ICE_TRANSPORT_POLICY || (process.env.TURN_URLS ? 'relay' : 'all');
+    const iceTransportPolicy = process.env.RTC_ICE_TRANSPORT_POLICY || 'all';
     return {
         iceServers,
         iceTransportPolicy
