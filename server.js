@@ -985,7 +985,22 @@ function authenticateIoBrokerRequest(req, res) {
 app.use(express.json({ limit: '1mb' }));
 app.use('/uploads', express.static(uploadDir));
 app.use('/backgrounds', express.static(backgroundsDir));
-app.use(express.static('public'));
+app.use(express.static('public', {
+    setHeaders: (res, filePath) => {
+        const filename = path.basename(filePath).toLowerCase();
+        if (filename === 'index.html') {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            return;
+        }
+        if (filename === 'sw.js') {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            return;
+        }
+        if (filename.endsWith('.js') || filename.endsWith('.css')) {
+            res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+        }
+    }
+}));
 
 // --- API Routes ---
 

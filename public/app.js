@@ -21,7 +21,7 @@ const replyContent = document.getElementById('reply-preview-content');
 let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
-let runtimeVersionLabel = 'Version 1.1.1';
+let runtimeVersionLabel = 'Version 1.1.2';
 let currentChatMessages = [];
 let activeSearchTab = 'text';
 let contactStateCache = {
@@ -2372,7 +2372,7 @@ function urlBase64ToUint8Array(base64String) {
 async function registerServiceWorkerAndPush() {
     if ('serviceWorker' in navigator && 'PushManager' in window) {
         try {
-            const register = await navigator.serviceWorker.register('/sw.js?v=2');
+            const register = await navigator.serviceWorker.register('/sw.js?v=3');
             
             // Check if already subscribed
             const sub = await register.pushManager.getSubscription();
