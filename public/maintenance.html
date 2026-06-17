@@ -28,6 +28,7 @@
                 <button class="nav-btn" data-tab="apartments">Apartments</button>
                 <button class="nav-btn" data-tab="templates">Stammdaten</button>
                 <button class="nav-btn" data-tab="assets">Wartungsobjekte</button>
+                <button class="nav-btn" data-tab="calendar">Kalender</button>
                 <button class="nav-btn" data-tab="plans">Wartungspläne</button>
             </nav>
 
@@ -43,7 +44,7 @@
                     <h2 id="tab-title">Dashboard</h2>
                 </div>
                 <div class="header-right">
-                    <div id="board-version" class="board-version">Version 1.2.0</div>
+                    <div id="board-version" class="board-version">Version 1.2.1</div>
                 </div>
             </header>
 
@@ -283,6 +284,62 @@
                     </div>
                 </div>
 
+                <div class="tab-panel" data-panel="calendar">
+                    <div class="editor-layout calendar-layout">
+                        <div class="surface">
+                            <div class="surface-header">
+                                <div>
+                                    <h3>Kalender</h3>
+                                    <span>Wartungen nach Tag, Woche oder Monat planen</span>
+                                </div>
+                                <div class="calendar-toolbar">
+                                    <div class="segmented-control">
+                                        <button type="button" class="segment-btn active" data-calendar-view="day">Tag</button>
+                                        <button type="button" class="segment-btn" data-calendar-view="week">Woche</button>
+                                        <button type="button" class="segment-btn" data-calendar-view="month">Monat</button>
+                                    </div>
+                                    <div class="calendar-nav">
+                                        <button type="button" class="mini-btn" id="calendar-prev-btn">Zurück</button>
+                                        <button type="button" class="mini-btn" id="calendar-today-btn">Heute</button>
+                                        <button type="button" class="mini-btn" id="calendar-next-btn">Weiter</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="calendar-range-bar">
+                                <strong id="calendar-range-label">-</strong>
+                                <span id="calendar-range-subtitle" class="muted-copy">Fällige Wartungen im gewählten Zeitraum</span>
+                            </div>
+                            <div id="calendar-surface" class="calendar-surface"></div>
+                        </div>
+
+                        <div class="surface">
+                            <div class="surface-header">
+                                <h3>Wartung direkt anlegen</h3>
+                                <span>Klick auf einen Tag übernimmt das Datum</span>
+                            </div>
+                            <form id="calendar-quick-form" class="stack-form">
+                                <label>Datum<input type="date" id="calendar-plan-date" required></label>
+                                <label>Wartungsobjekt<select id="calendar-plan-asset" required></select></label>
+                                <label>Titel<input type="text" id="calendar-plan-title" required></label>
+                                <label>Intervall (Tage)<input type="number" id="calendar-plan-interval-days" min="1" value="180"></label>
+                                <label>Priorität
+                                    <select id="calendar-plan-priority">
+                                        <option value="low">Niedrig</option>
+                                        <option value="normal" selected>Normal</option>
+                                        <option value="high">Hoch</option>
+                                        <option value="critical">Kritisch</option>
+                                    </select>
+                                </label>
+                                <label>Verantwortlich<input type="text" id="calendar-plan-responsible"></label>
+                                <div class="form-actions">
+                                    <button type="submit" class="action-btn">Im Kalender anlegen</button>
+                                    <button type="button" class="action-btn secondary" onclick="resetCalendarQuickForm()">Neu</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="tab-panel" data-panel="plans">
                     <div class="editor-layout">
                         <div class="surface">
@@ -343,6 +400,6 @@
         </main>
     </div>
 
-    <script src="maintenance.js?v=1"></script>
+    <script src="maintenance.js?v=3"></script>
 </body>
 </html>

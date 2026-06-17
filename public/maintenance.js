@@ -6,7 +6,10 @@ const appState = {
     apartments: [],
     templates: [],
     assets: [],
-    plans: []
+    plans: [],
+    calendarView: 'month',
+    calendarDate: new Date(),
+    selectedDate: new Date().toISOString().slice(0, 10)
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -19,6 +22,12 @@ function bindNavigation() {
     document.querySelectorAll('.nav-btn').forEach((button) => {
         button.addEventListener('click', () => setActiveTab(button.dataset.tab || 'dashboard'));
     });
+    document.querySelectorAll('.segment-btn').forEach((button) => {
+        button.addEventListener('click', () => setCalendarView(button.dataset.calendarView || 'month'));
+    });
+    document.getElementById('calendar-prev-btn').addEventListener('click', () => shiftCalendarRange(-1));
+    document.getElementById('calendar-next-btn').addEventListener('click', () => shiftCalendarRange(1));
+    document.getElementById('calendar-today-btn').addEventListener('click', goToCalendarToday);
 }
 
 function setActiveTab(tabName) {
@@ -34,6 +43,7 @@ function setActiveTab(tabName) {
         apartments: 'Apartments',
         templates: 'Stammdaten',
         assets: 'Wartungsobjekte',
+        calendar: 'Kalender',
         plans: 'Wartungspläne'
     };
     document.getElementById('tab-title').textContent = titleMap[tabName] || 'Dashboard';
@@ -45,7 +55,9 @@ function bindForms() {
     document.getElementById('template-form').addEventListener('submit', submitTemplateForm);
     document.getElementById('asset-form').addEventListener('submit', submitAssetForm);
     document.getElementById('plan-form').addEventListener('submit', submitPlanForm);
+    document.getElementById('calendar-quick-form').addEventListener('submit', submitCalendarQuickForm);
     document.getElementById('asset-building').addEventListener('change', syncApartmentOptions);
+    document.getElementById('calendar-plan-asset').addEventListener('change', hydrateCalendarTitleFromAsset);
 }
 
 async function bootstrapBoard() {
@@ -94,10 +106,12 @@ function renderBoard() {
     renderApartments();
     renderTemplates();
     renderAssets();
+    renderCalendar();
     renderPlans();
     fillBuildingSelects();
     fillTemplateSelect();
     fillAssetSelect();
+    fillCalendarAssetSelect();
     syncApartmentOptions();
 }
 
@@ -233,6 +247,21 @@ function renderAssets() {
     `).join('');
 }
 
+function renderCalendar() {
+    updateCalendarControls();
+    const surface = document.getElementById('calendar-surface');
+    const view = appState.calendarView;
+    if (view === 'day') {
+        surface.innerHTML = renderDayCalendar();
+        return;
+    }
+    if (view === 'week') {
+        surface.innerHTML = renderWeekCalendar();
+        return;
+    }
+    surface.innerHTML = renderMonthCalendar();
+}
+
 function renderPlans() {
     const body = document.getElementById('plans-body');
     if (!appState.plans.length) {
@@ -278,6 +307,14 @@ function fillAssetSelect() {
     select.innerHTML = ['<option value="">Bitte wählen</option>']
         .concat(appState.assets.map((asset) => `<option value="${asset.id}">${escapeHtml(asset.name)} - ${escapeHtml(asset.building_name || '')}</option>`))
         .join('');
+}
+
+function fillCalendarAssetSelect() {
+    const select = document.getElementById('calendar-plan-asset');
+    select.innerHTML = ['<option value="">Bitte wählen</option>']
+        .concat(appState.assets.map((asset) => `<option value="${asset.id}">${escapeHtml(asset.name)} - ${escapeHtml(asset.building_name || '')}</option>`))
+        .join('');
+    document.getElementById('calendar-plan-date').value = appState.selectedDate || new Date().toISOString().slice(0, 10);
 }
 
 function syncApartmentOptions() {
@@ -384,6 +421,24 @@ async function submitPlanForm(event) {
     resetPlanForm();
 }
 
+async function submitCalendarQuickForm(event) {
+    event.preventDefault();
+    const payload = {
+        requesterId: appState.currentUser.id,
+        asset_id: Number(document.getElementById('calendar-plan-asset').value || 0),
+        title: document.getElementById('calendar-plan-title').value.trim(),
+        interval_days: Number(document.getElementById('calendar-plan-interval-days').value || 180),
+        next_due_date: document.getElementById('calendar-plan-date').value,
+        responsible: document.getElementById('calendar-plan-responsible').value.trim(),
+        priority: document.getElementById('calendar-plan-priority').value,
+        instructions: '',
+        active: true
+    };
+    await saveEntity('/api/maintenance/plans', 'POST', payload, 'Wartung im Kalender angelegt.');
+    resetCalendarQuickForm();
+    setActiveTab('calendar');
+}
+
 async function saveEntity(url, method, payload, successMessage) {
     try {
         await api(url, { method, body: payload });
@@ -439,6 +494,13 @@ function resetPlanForm() {
     document.getElementById('plan-interval-days').value = 180;
     document.getElementById('plan-priority').value = 'normal';
     document.getElementById('plan-active').checked = true;
+}
+
+function resetCalendarQuickForm() {
+    document.getElementById('calendar-quick-form').reset();
+    document.getElementById('calendar-plan-date').value = appState.selectedDate || new Date().toISOString().slice(0, 10);
+    document.getElementById('calendar-plan-interval-days').value = 180;
+    document.getElementById('calendar-plan-priority').value = 'normal';
 }
 
 function editBuilding(id) {
@@ -536,6 +598,189 @@ async function deleteAsset(id) {
 async function deletePlan(id) {
     if (!confirm('Wartungsplan wirklich löschen?')) return;
     await deleteEntity(`/api/maintenance/plans/${id}`);
+}
+
+function setCalendarView(view) {
+    appState.calendarView = view;
+    renderCalendar();
+}
+
+function updateCalendarControls() {
+    document.querySelectorAll('.segment-btn').forEach((button) => {
+        button.classList.toggle('active', button.dataset.calendarView === appState.calendarView);
+    });
+
+    const selected = getSelectedDate();
+    document.getElementById('calendar-plan-date').value = appState.selectedDate || selected;
+
+    let label = '';
+    if (appState.calendarView === 'day') {
+        label = formatDate(selected);
+    } else if (appState.calendarView === 'week') {
+        const start = startOfWeek(appState.calendarDate);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        label = `${formatDate(start.toISOString().slice(0, 10))} bis ${formatDate(end.toISOString().slice(0, 10))}`;
+    } else {
+        label = appState.calendarDate.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+    }
+    document.getElementById('calendar-range-label').textContent = label;
+}
+
+function shiftCalendarRange(direction) {
+    if (appState.calendarView === 'day') {
+        appState.calendarDate.setDate(appState.calendarDate.getDate() + direction);
+    } else if (appState.calendarView === 'week') {
+        appState.calendarDate.setDate(appState.calendarDate.getDate() + (7 * direction));
+    } else {
+        appState.calendarDate.setMonth(appState.calendarDate.getMonth() + direction);
+    }
+    renderCalendar();
+}
+
+function goToCalendarToday() {
+    appState.calendarDate = new Date();
+    appState.selectedDate = new Date().toISOString().slice(0, 10);
+    resetCalendarQuickForm();
+    renderCalendar();
+}
+
+function selectCalendarDate(dateString) {
+    appState.selectedDate = dateString;
+    document.getElementById('calendar-plan-date').value = dateString;
+    renderCalendar();
+}
+
+function hydrateCalendarTitleFromAsset() {
+    const assetId = Number(document.getElementById('calendar-plan-asset').value || 0);
+    const asset = appState.assets.find((item) => Number(item.id) === assetId);
+    const titleInput = document.getElementById('calendar-plan-title');
+    if (!asset || titleInput.value.trim()) return;
+    titleInput.value = `${asset.name} Wartung`;
+}
+
+function getSelectedDate() {
+    return appState.selectedDate || new Date().toISOString().slice(0, 10);
+}
+
+function renderMonthCalendar() {
+    const current = new Date(appState.calendarDate);
+    const firstOfMonth = new Date(current.getFullYear(), current.getMonth(), 1);
+    const gridStart = startOfWeek(firstOfMonth);
+    const weekdays = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+    const html = [];
+
+    html.push('<div class="calendar-month-grid">');
+    weekdays.forEach((day) => html.push(`<div class="calendar-weekday">${day}</div>`));
+
+    for (let index = 0; index < 42; index += 1) {
+        const date = new Date(gridStart);
+        date.setDate(gridStart.getDate() + index);
+        const iso = date.toISOString().slice(0, 10);
+        const dayPlans = getPlansForDate(iso);
+        const isOutside = date.getMonth() !== current.getMonth();
+        const isSelected = iso === appState.selectedDate;
+        html.push(`
+            <div class="calendar-day-cell ${isOutside ? 'outside' : ''} ${isSelected ? 'selected' : ''}" onclick="selectCalendarDate('${iso}')">
+                <div class="calendar-day-head">
+                    <span class="calendar-day-number">${date.getDate()}</span>
+                    <span class="muted-copy">${dayPlans.length || ''}</span>
+                </div>
+                <div class="calendar-day-events">
+                    ${dayPlans.slice(0, 3).map(renderCalendarEventCard).join('')}
+                    ${dayPlans.length > 3 ? `<div class="muted-copy">+ ${dayPlans.length - 3} weitere</div>` : ''}
+                </div>
+            </div>
+        `);
+    }
+
+    html.push('</div>');
+    return html.join('');
+}
+
+function renderWeekCalendar() {
+    const start = startOfWeek(appState.calendarDate);
+    const weekDates = Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(start);
+        date.setDate(start.getDate() + index);
+        return date;
+    });
+
+    return `
+        <div class="calendar-week-view">
+            <div class="calendar-hour-label"></div>
+            <div class="calendar-week-columns">
+                ${weekDates.map((date) => `
+                    <div class="calendar-week-header ${date.toISOString().slice(0, 10) === appState.selectedDate ? 'selected' : ''}">
+                        <strong>${date.toLocaleDateString('de-DE', { weekday: 'short' })}</strong><br>
+                        ${date.getDate()}.${date.getMonth() + 1}
+                    </div>
+                `).join('')}
+            </div>
+            <div class="calendar-hour-label">Ganztägig</div>
+            <div class="calendar-week-columns">
+                ${weekDates.map((date) => {
+                    const iso = date.toISOString().slice(0, 10);
+                    const plans = getPlansForDate(iso);
+                    return `
+                        <div class="calendar-week-column">
+                            <div class="calendar-slot ${iso === appState.selectedDate ? 'selected' : ''}" onclick="selectCalendarDate('${iso}')">
+                                ${plans.length ? plans.map(renderCalendarEventCard).join('') : '<div class="muted-copy">Keine Wartung</div>'}
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderDayCalendar() {
+    const iso = appState.calendarDate.toISOString().slice(0, 10);
+    const plans = getPlansForDate(iso);
+    return `
+        <div class="calendar-day-summary">
+            <strong>${formatDate(iso)}</strong>
+            <span class="muted-copy">${plans.length} Wartungen</span>
+        </div>
+        <div class="calendar-day-view">
+            <div class="calendar-hour-label">Ganztägig</div>
+            <div class="calendar-slot ${iso === appState.selectedDate ? 'selected' : ''}" onclick="selectCalendarDate('${iso}')">
+                ${plans.length ? plans.map(renderCalendarEventCard).join('') : '<div class="calendar-empty">Für diesen Tag ist noch keine Wartung geplant.</div>'}
+            </div>
+        </div>
+    `;
+}
+
+function renderCalendarEventCard(plan) {
+    const priority = String(plan.priority || 'normal').toLowerCase();
+    return `
+        <div class="calendar-event-card ${escapeHtml(priority)}" onclick="handleCalendarEventClick(event, ${plan.id})">
+            <strong>${escapeHtml(plan.title)}</strong>
+            <div>${escapeHtml(plan.asset_name || '-')}</div>
+            <div class="muted-copy">${escapeHtml(plan.building_name || '-')}</div>
+        </div>
+    `;
+}
+
+function handleCalendarEventClick(event, planId) {
+    if (event) event.stopPropagation();
+    editPlan(planId);
+}
+
+function getPlansForDate(dateString) {
+    return appState.plans
+        .filter((plan) => plan.active && plan.next_due_date === dateString)
+        .sort((a, b) => String(a.priority || '').localeCompare(String(b.priority || '')));
+}
+
+function startOfWeek(baseDate) {
+    const date = new Date(baseDate);
+    const day = date.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() + diff);
+    return date;
 }
 
 async function deleteEntity(url) {
