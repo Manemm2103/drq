@@ -7,12 +7,17 @@
   "theme_color": "#dcdcdc",
   "icons": [
     {
-      "src": "/drq-logo.svg",
-      "sizes": "any",
-      "type": "image/svg+xml"
+      "src": "/apple-touch-icon.png?v=2",
+      "sizes": "180x180",
+      "type": "image/png"
     },
     {
-      "src": "/drq-logo.svg",
+      "src": "/icon.png?v=2",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/drq-home-logo.svg?v=1",
       "sizes": "any",
       "type": "image/svg+xml"
     }

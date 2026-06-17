@@ -54,6 +54,15 @@ textarea {
     font-size: 1.55rem;
 }
 
+.board-brand-logo {
+    width: 72px;
+    height: 72px;
+    display: block;
+    border-radius: 50%;
+    margin-bottom: 10px;
+    background: #000;
+}
+
 .brand-kicker,
 .brand-subtitle,
 .session-label,
@@ -328,6 +337,21 @@ th {
     align-items: center;
     gap: 12px;
     flex-wrap: wrap;
+}
+
+.calendar-jump-group {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.calendar-jump-select {
+    min-width: 108px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text);
+    padding: 8px 10px;
 }
 
 .segmented-control {

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">DRQ Home Logo</title>
+  <desc id="desc">Schwarz-weisses DRQ Logo im runden Stil</desc>
+  <rect width="1024" height="1024" fill="#000"/>
+  <circle cx="512" cy="512" r="482" fill="#000" stroke="#fff" stroke-width="14"/>
+  <text x="512" y="290" text-anchor="middle" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="148" font-weight="700" letter-spacing="0">DRQ</text>
+  <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M268 410 L268 620 L362 530 L362 410 Z" fill="#fff" stroke="none"/>
+    <path d="M468 414 L468 576 C468 632 510 668 566 668 C622 668 664 632 664 576 L664 414" stroke-width="120"/>
+    <path d="M734 414 L734 614 C734 718 662 804 552 824 C446 844 340 806 284 736" stroke-width="120"/>
+  </g>
+</svg>

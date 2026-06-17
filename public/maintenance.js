@@ -25,6 +25,8 @@ function bindNavigation() {
     document.querySelectorAll('.segment-btn').forEach((button) => {
         button.addEventListener('click', () => setCalendarView(button.dataset.calendarView || 'month'));
     });
+    document.getElementById('calendar-year-select').addEventListener('change', handleCalendarJumpChange);
+    document.getElementById('calendar-month-select').addEventListener('change', handleCalendarJumpChange);
     document.getElementById('calendar-prev-btn').addEventListener('click', () => shiftCalendarRange(-1));
     document.getElementById('calendar-next-btn').addEventListener('click', () => shiftCalendarRange(1));
     document.getElementById('calendar-today-btn').addEventListener('click', goToCalendarToday);
@@ -610,6 +612,8 @@ function updateCalendarControls() {
         button.classList.toggle('active', button.dataset.calendarView === appState.calendarView);
     });
 
+    fillCalendarJumpSelects();
+
     const selected = getSelectedDate();
     document.getElementById('calendar-plan-date').value = appState.selectedDate || selected;
 
@@ -642,6 +646,36 @@ function goToCalendarToday() {
     appState.calendarDate = new Date();
     appState.selectedDate = new Date().toISOString().slice(0, 10);
     resetCalendarQuickForm();
+    renderCalendar();
+}
+
+function fillCalendarJumpSelects() {
+    const yearSelect = document.getElementById('calendar-year-select');
+    const monthSelect = document.getElementById('calendar-month-select');
+    const currentYear = appState.calendarDate.getFullYear();
+    const currentMonth = appState.calendarDate.getMonth();
+    const startYear = currentYear - 5;
+    const endYear = currentYear + 8;
+
+    yearSelect.innerHTML = Array.from({ length: endYear - startYear + 1 }, (_, index) => {
+        const year = startYear + index;
+        return `<option value="${year}">${year}</option>`;
+    }).join('');
+
+    monthSelect.innerHTML = Array.from({ length: 12 }, (_, index) => {
+        const label = new Date(2026, index, 1).toLocaleDateString('de-DE', { month: 'long' });
+        return `<option value="${index}">${label}</option>`;
+    }).join('');
+
+    yearSelect.value = String(currentYear);
+    monthSelect.value = String(currentMonth);
+}
+
+function handleCalendarJumpChange() {
+    const year = Number(document.getElementById('calendar-year-select').value);
+    const month = Number(document.getElementById('calendar-month-select').value);
+    const safeDate = Math.min(appState.calendarDate.getDate(), daysInMonth(year, month));
+    appState.calendarDate = new Date(year, month, safeDate);
     renderCalendar();
 }
 
@@ -781,6 +815,10 @@ function startOfWeek(baseDate) {
     date.setHours(0, 0, 0, 0);
     date.setDate(date.getDate() + diff);
     return date;
+}
+
+function daysInMonth(year, monthIndex) {
+    return new Date(year, monthIndex + 1, 0).getDate();
 }
 
 async function deleteEntity(url) {
