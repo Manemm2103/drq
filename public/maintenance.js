@@ -8,6 +8,14 @@ const appState = {
     assets: [],
     plans: [],
     openedPlanId: null,
+    filters: {
+        dashboard: '',
+        buildings: '',
+        apartments: '',
+        templates: '',
+        assets: '',
+        plans: ''
+    },
     calendarView: 'month',
     calendarDate: new Date(),
     selectedDate: new Date().toISOString().slice(0, 10)
@@ -31,6 +39,12 @@ function bindNavigation() {
     document.getElementById('calendar-prev-btn').addEventListener('click', () => shiftCalendarRange(-1));
     document.getElementById('calendar-next-btn').addEventListener('click', () => shiftCalendarRange(1));
     document.getElementById('calendar-today-btn').addEventListener('click', goToCalendarToday);
+    bindTableSearch('dashboard-plan-search', 'dashboard');
+    bindTableSearch('building-search', 'buildings');
+    bindTableSearch('apartment-search', 'apartments');
+    bindTableSearch('template-search', 'templates');
+    bindTableSearch('asset-search', 'assets');
+    bindTableSearch('plan-search', 'plans');
 }
 
 function setActiveTab(tabName) {
@@ -148,6 +162,16 @@ function renderSummary() {
 
     const topPlans = [...appState.plans]
         .filter((plan) => plan.active)
+        .filter((plan) => matchesSearch([
+            plan.title,
+            plan.template_name,
+            plan.asset_name,
+            plan.building_name,
+            plan.apartment_name,
+            plan.responsible,
+            plan.instructions,
+            plan.last_completion_note
+        ], appState.filters.dashboard))
         .sort((a, b) => compareDates(a.next_due_date, b.next_due_date))
         .slice(0, 10);
 
@@ -178,11 +202,18 @@ function renderSummary() {
 
 function renderBuildings() {
     const body = document.getElementById('buildings-body');
-    if (!appState.buildings.length) {
+    const filteredBuildings = appState.buildings.filter((building) => matchesSearch([
+        building.name,
+        building.code,
+        building.address,
+        building.city,
+        building.notes
+    ], appState.filters.buildings));
+    if (!filteredBuildings.length) {
         body.innerHTML = `<tr><td colspan="6" class="muted-copy">Noch keine Gebäude angelegt.</td></tr>`;
         return;
     }
-    body.innerHTML = appState.buildings.map((building) => `
+    body.innerHTML = filteredBuildings.map((building) => `
         <tr class="clickable-row" onclick="editBuilding(${building.id})">
             <td><strong>${escapeHtml(building.name)}</strong></td>
             <td>${escapeHtml(building.code || '-')}</td>
@@ -201,11 +232,19 @@ function renderBuildings() {
 
 function renderApartments() {
     const body = document.getElementById('apartments-body');
-    if (!appState.apartments.length) {
+    const filteredApartments = appState.apartments.filter((apartment) => matchesSearch([
+        apartment.building_name,
+        apartment.name,
+        apartment.floor,
+        apartment.unit_number,
+        apartment.tenant_name,
+        apartment.notes
+    ], appState.filters.apartments));
+    if (!filteredApartments.length) {
         body.innerHTML = `<tr><td colspan="6" class="muted-copy">Noch keine Apartments angelegt.</td></tr>`;
         return;
     }
-    body.innerHTML = appState.apartments.map((apartment) => `
+    body.innerHTML = filteredApartments.map((apartment) => `
         <tr class="clickable-row" onclick="editApartment(${apartment.id})">
             <td>${escapeHtml(apartment.building_name || '-')}</td>
             <td><strong>${escapeHtml(apartment.name)}</strong><div class="muted-copy">${escapeHtml(apartment.unit_number || '')}</div></td>
@@ -224,11 +263,19 @@ function renderApartments() {
 
 function renderTemplates() {
     const body = document.getElementById('templates-body');
-    if (!appState.templates.length) {
+    const filteredTemplates = appState.templates.filter((template) => matchesSearch([
+        template.name,
+        template.category,
+        template.manufacturer,
+        template.description,
+        template.checklist,
+        ...(template.files || []).map((file) => file.original_name)
+    ], appState.filters.templates));
+    if (!filteredTemplates.length) {
         body.innerHTML = `<tr><td colspan="6" class="muted-copy">Noch keine Stammdaten angelegt.</td></tr>`;
         return;
     }
-    body.innerHTML = appState.templates.map((template) => `
+    body.innerHTML = filteredTemplates.map((template) => `
         <tr class="clickable-row" onclick="editTemplate(${template.id})">
             <td><strong>${escapeHtml(template.name)}</strong></td>
             <td>${escapeHtml(template.category || '-')}</td>
@@ -247,11 +294,20 @@ function renderTemplates() {
 
 function renderAssets() {
     const body = document.getElementById('assets-body');
-    if (!appState.assets.length) {
+    const filteredAssets = appState.assets.filter((asset) => matchesSearch([
+        asset.name,
+        asset.location,
+        asset.serial_number,
+        asset.template_name,
+        asset.building_name,
+        asset.apartment_name,
+        asset.notes
+    ], appState.filters.assets));
+    if (!filteredAssets.length) {
         body.innerHTML = `<tr><td colspan="7" class="muted-copy">Noch keine Wartungsobjekte angelegt.</td></tr>`;
         return;
     }
-    body.innerHTML = appState.assets.map((asset) => `
+    body.innerHTML = filteredAssets.map((asset) => `
         <tr class="clickable-row" onclick="editAsset(${asset.id})">
             <td><strong>${escapeHtml(asset.name)}</strong><div class="muted-copy">${escapeHtml(asset.location || '')}</div></td>
             <td>${escapeHtml(asset.template_name || '-')}</td>
@@ -286,11 +342,22 @@ function renderCalendar() {
 
 function renderPlans() {
     const body = document.getElementById('plans-body');
-    if (!appState.plans.length) {
+    const filteredPlans = appState.plans.filter((plan) => matchesSearch([
+        plan.title,
+        plan.asset_name,
+        plan.building_name,
+        plan.apartment_name,
+        plan.template_name,
+        plan.responsible,
+        plan.priority,
+        plan.instructions,
+        plan.last_completion_note
+    ], appState.filters.plans));
+    if (!filteredPlans.length) {
         body.innerHTML = `<tr><td colspan="7" class="muted-copy">Noch keine Wartungspläne angelegt.</td></tr>`;
         return;
     }
-    body.innerHTML = appState.plans.map((plan) => `
+    body.innerHTML = filteredPlans.map((plan) => `
         <tr class="clickable-row" onclick="editPlan(${plan.id})">
             <td><strong>${escapeHtml(plan.title)}</strong></td>
             <td>${escapeHtml(plan.asset_name || '-')}</td>
@@ -314,7 +381,7 @@ function renderPlanFocusState() {
     const docsPanel = document.getElementById('plan-linked-docs');
     const openedPlan = appState.plans.find((item) => Number(item.id) === Number(appState.openedPlanId));
 
-    if (listSurface) listSurface.hidden = !!openedPlan;
+    if (listSurface) listSurface.hidden = false;
     if (closeBtn) closeBtn.style.display = openedPlan ? 'inline-flex' : 'none';
 
     if (!docsPanel) return;
@@ -1061,6 +1128,20 @@ async function deleteTemplateFile(templateId, fileId) {
     } catch (error) {
         showAlert(error.message || 'Datei konnte nicht gelöscht werden.', 'error');
     }
+}
+
+function bindTableSearch(elementId, filterKey) {
+    const input = document.getElementById(elementId);
+    if (!input) return;
+    input.addEventListener('input', () => {
+        appState.filters[filterKey] = String(input.value || '').trim().toLowerCase();
+        renderBoard();
+    });
+}
+
+function matchesSearch(fields, term) {
+    if (!term) return true;
+    return fields.some((value) => String(value || '').toLowerCase().includes(term));
 }
 
 async function sendMaintenanceTestMail() {

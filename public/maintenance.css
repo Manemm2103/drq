@@ -249,22 +249,12 @@ textarea {
 
 .editor-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
     gap: 18px;
 }
 
-.editor-layout > .surface:first-child {
-    width: 100%;
-    max-width: 920px;
-    margin: 0 auto;
-}
-
-.calendar-layout > .surface:first-child {
-    max-width: none;
-}
-
-.editor-layout > .surface:not(:first-child) {
-    width: 100%;
+.calendar-layout {
+    grid-template-columns: minmax(0, 1fr) 320px;
 }
 
 .stack-form {
@@ -322,6 +312,16 @@ textarea {
 
 .table-wrap {
     overflow: auto;
+}
+
+.table-search-input {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: var(--surface-strong);
+    color: var(--text);
+    margin-bottom: 12px;
 }
 
 .clickable-row {

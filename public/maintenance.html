@@ -6,7 +6,7 @@
     <title>DR-MAINTENANCE BOARD</title>
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=4">
     <link rel="icon" type="image/png" href="/drhome-logo.png?v=2">
-    <link rel="stylesheet" href="maintenance.css?v=4">
+    <link rel="stylesheet" href="maintenance.css?v=5">
 </head>
 <body>
     <div class="maintenance-shell">
@@ -47,7 +47,7 @@
                 </div>
                 <div class="header-right">
                     <button id="maintenance-test-mail-btn" class="action-btn secondary" type="button" onclick="sendMaintenanceTestMail()" hidden>Testmail senden</button>
-                    <div id="board-version" class="board-version">Version 1.3.6</div>
+                    <div id="board-version" class="board-version">Version 1.3.7</div>
                 </div>
             </header>
 
@@ -75,6 +75,7 @@
                             <h3>Nächste Wartungen</h3>
                             <span>Die wichtigsten Fälligkeiten zuerst</span>
                         </div>
+                        <input type="search" id="dashboard-plan-search" class="table-search-input" placeholder="Wartungen durchsuchen">
                         <div class="table-wrap">
                             <table>
                                 <thead>
@@ -119,6 +120,7 @@
                                 <h3>Gebäudeliste</h3>
                                 <span>Mit Apartment- und Objektanzahl</span>
                             </div>
+                            <input type="search" id="building-search" class="table-search-input" placeholder="Gebäude durchsuchen">
                             <div class="table-wrap">
                                 <table>
                                     <thead>
@@ -165,6 +167,7 @@
                                 <h3>Apartments</h3>
                                 <span>Nach Gebäude sortiert</span>
                             </div>
+                            <input type="search" id="apartment-search" class="table-search-input" placeholder="Apartments durchsuchen">
                             <div class="table-wrap">
                                 <table>
                                     <thead>
@@ -215,6 +218,7 @@
                                 <h3>Stammdatenliste</h3>
                                 <span>Basis für Wartungsobjekte und Pläne</span>
                             </div>
+                            <input type="search" id="template-search" class="table-search-input" placeholder="Stammdaten durchsuchen">
                             <div class="table-wrap">
                                 <table>
                                     <thead>
@@ -270,6 +274,7 @@
                                 <h3>Wartungsobjekte</h3>
                                 <span>Gebäude, Apartments und Pläne im Überblick</span>
                             </div>
+                            <input type="search" id="asset-search" class="table-search-input" placeholder="Wartungsobjekte durchsuchen">
                             <div class="table-wrap">
                                 <table>
                                     <thead>
@@ -391,6 +396,7 @@
                                 <h3>Wartungspläne</h3>
                                 <span>Mit Fälligkeit und Sofort-Aktionen</span>
                             </div>
+                            <input type="search" id="plan-search" class="table-search-input" placeholder="Wartungspläne durchsuchen">
                             <div class="table-wrap">
                                 <table>
                                     <thead>
@@ -414,6 +420,6 @@
         </main>
     </div>
 
-    <script src="maintenance.js?v=10"></script>
+    <script src="maintenance.js?v=11"></script>
 </body>
 </html>
