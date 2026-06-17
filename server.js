@@ -793,6 +793,18 @@ db.exec(`
         FOREIGN KEY(building_id) REFERENCES maintenance_buildings(id),
         FOREIGN KEY(apartment_id) REFERENCES maintenance_apartments(id)
     );
+    CREATE TABLE IF NOT EXISTS maintenance_staff (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        role TEXT DEFAULT '',
+        email TEXT DEFAULT '',
+        phone TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        active INTEGER DEFAULT 1,
+        created_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS maintenance_plans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         asset_id INTEGER NOT NULL,
@@ -801,6 +813,7 @@ db.exec(`
         next_due_date TEXT DEFAULT '',
         last_completed_at TEXT DEFAULT '',
         last_completion_note TEXT DEFAULT '',
+        responsible_staff_id INTEGER,
         responsible TEXT DEFAULT '',
         priority TEXT DEFAULT 'normal',
         instructions TEXT DEFAULT '',
@@ -808,7 +821,8 @@ db.exec(`
         created_by INTEGER,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(asset_id) REFERENCES maintenance_assets(id)
+        FOREIGN KEY(asset_id) REFERENCES maintenance_assets(id),
+        FOREIGN KEY(responsible_staff_id) REFERENCES maintenance_staff(id)
     );
     CREATE TABLE IF NOT EXISTS maintenance_email_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -860,6 +874,10 @@ try {
     if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'last_completion_note')) {
         db.prepare("ALTER TABLE maintenance_plans ADD COLUMN last_completion_note TEXT DEFAULT ''").run();
         console.log("Migration: Added last_completion_note to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'responsible_staff_id')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN responsible_staff_id INTEGER").run();
+        console.log("Migration: Added responsible_staff_id to maintenance_plans");
     }
     
     const msgCols = db.prepare("PRAGMA table_info(messages)").all();
@@ -973,6 +991,18 @@ try {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS maintenance_staff (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            role TEXT DEFAULT '',
+            email TEXT DEFAULT '',
+            phone TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            active INTEGER DEFAULT 1,
+            created_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
         CREATE TABLE IF NOT EXISTS maintenance_plans (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             asset_id INTEGER NOT NULL,
@@ -981,6 +1011,7 @@ try {
             next_due_date TEXT DEFAULT '',
             last_completed_at TEXT DEFAULT '',
             last_completion_note TEXT DEFAULT '',
+            responsible_staff_id INTEGER,
             responsible TEXT DEFAULT '',
             priority TEXT DEFAULT 'normal',
             instructions TEXT DEFAULT '',
@@ -2424,6 +2455,22 @@ function listMaintenanceAssets() {
     }));
 }
 
+function listMaintenanceStaff() {
+    return db.prepare(`
+        SELECT
+            ms.*,
+            COUNT(mp.id) AS plan_count
+        FROM maintenance_staff ms
+        LEFT JOIN maintenance_plans mp ON mp.responsible_staff_id = ms.id
+        GROUP BY ms.id
+        ORDER BY ms.active DESC, ms.name COLLATE NOCASE ASC
+    `).all().map((row) => ({
+        ...row,
+        active: Number(row.active || 0) === 1,
+        plan_count: Number(row.plan_count || 0)
+    }));
+}
+
 function listMaintenancePlans() {
     const plans = db.prepare(`
         SELECT
@@ -2432,15 +2479,18 @@ function listMaintenancePlans() {
             ma.template_id AS template_id,
             b.name AS building_name,
             a.name AS apartment_name,
+            a.tenant_name AS tenant_name,
             t.name AS template_name,
             t.description AS template_description,
             t.checklist AS template_checklist,
-            t.default_interval_days AS template_default_interval_days
+            t.default_interval_days AS template_default_interval_days,
+            ms.name AS staff_name
         FROM maintenance_plans mp
         JOIN maintenance_assets ma ON ma.id = mp.asset_id
         JOIN maintenance_buildings b ON b.id = ma.building_id
         LEFT JOIN maintenance_apartments a ON a.id = ma.apartment_id
         LEFT JOIN maintenance_asset_templates t ON t.id = ma.template_id
+        LEFT JOIN maintenance_staff ms ON ms.id = mp.responsible_staff_id
         ORDER BY
             CASE WHEN COALESCE(mp.next_due_date, '') = '' THEN 1 ELSE 0 END ASC,
             mp.next_due_date ASC,
@@ -2448,7 +2498,8 @@ function listMaintenancePlans() {
     `).all().map((row) => ({
         ...row,
         active: Number(row.active || 0) === 1,
-        interval_days: Number(row.interval_days || 0)
+        interval_days: Number(row.interval_days || 0),
+        responsible_staff_id: row.responsible_staff_id ? Number(row.responsible_staff_id) : null
     }));
     const templateIds = [...new Set(plans.map((plan) => Number(plan.template_id)).filter(Boolean))];
     const fileMap = new Map();
@@ -2779,6 +2830,7 @@ app.get('/api/maintenance/bootstrap', (req, res) => {
         apartments: listMaintenanceApartments(),
         templates: listMaintenanceTemplates(),
         assets: listMaintenanceAssets(),
+        staff: listMaintenanceStaff(),
         plans: listMaintenancePlans()
     });
 });
@@ -3158,22 +3210,90 @@ app.delete('/api/maintenance/assets/:id', (req, res) => {
     res.json({ success: true });
 });
 
+app.post('/api/maintenance/staff', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ success: false, message: 'Name fehlt' });
+
+    const result = db.prepare(`
+        INSERT INTO maintenance_staff (name, role, email, phone, notes, active, created_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+        name,
+        String(req.body?.role || '').trim(),
+        String(req.body?.email || '').trim(),
+        String(req.body?.phone || '').trim(),
+        String(req.body?.notes || '').trim(),
+        req.body?.active === false ? 0 : 1,
+        requester.id
+    );
+
+    res.json({ success: true, id: result.lastInsertRowid });
+});
+
+app.put('/api/maintenance/staff/:id', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    const name = String(req.body?.name || '').trim();
+    if (!db.prepare('SELECT id FROM maintenance_staff WHERE id = ?').get(id)) {
+        return res.status(404).json({ success: false, message: 'Mitarbeiter nicht gefunden' });
+    }
+    if (!name) return res.status(400).json({ success: false, message: 'Name fehlt' });
+
+    db.prepare(`
+        UPDATE maintenance_staff
+        SET name = ?, role = ?, email = ?, phone = ?, notes = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(
+        name,
+        String(req.body?.role || '').trim(),
+        String(req.body?.email || '').trim(),
+        String(req.body?.phone || '').trim(),
+        String(req.body?.notes || '').trim(),
+        req.body?.active === false ? 0 : 1,
+        id
+    );
+
+    res.json({ success: true });
+});
+
+app.delete('/api/maintenance/staff/:id', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    const planCount = Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_plans WHERE responsible_staff_id = ?').get(id) || {}).count || 0);
+    if (planCount) {
+        return res.status(400).json({ success: false, message: 'Mitarbeiter ist noch Wartungsplänen zugewiesen' });
+    }
+    db.prepare('DELETE FROM maintenance_staff WHERE id = ?').run(id);
+    res.json({ success: true });
+});
+
 app.post('/api/maintenance/plans', (req, res) => {
     const requester = requireMaintenanceUser(req, res);
     if (!requester) return;
 
     const assetId = Number(req.body?.asset_id);
+    const responsibleStaffId = Number(req.body?.responsible_staff_id || 0);
     const title = String(req.body?.title || '').trim();
     const intervalDays = Math.max(1, Number(req.body?.interval_days || 180));
     const nextDueDate = normalizeMaintenanceDate(req.body?.next_due_date) || addDaysIso(new Date().toISOString().slice(0, 10), intervalDays);
     if (!assetId || !db.prepare('SELECT id FROM maintenance_assets WHERE id = ?').get(assetId)) {
         return res.status(400).json({ success: false, message: 'Wartungsobjekt fehlt' });
     }
+    if (responsibleStaffId && !db.prepare('SELECT id FROM maintenance_staff WHERE id = ?').get(responsibleStaffId)) {
+        return res.status(400).json({ success: false, message: 'Mitarbeiter nicht gefunden' });
+    }
     if (!title) return res.status(400).json({ success: false, message: 'Titel fehlt' });
 
     const result = db.prepare(`
-        INSERT INTO maintenance_plans (asset_id, title, interval_days, next_due_date, last_completed_at, last_completion_note, responsible, priority, instructions, active, created_by, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO maintenance_plans (asset_id, title, interval_days, next_due_date, last_completed_at, last_completion_note, responsible_staff_id, responsible, priority, instructions, active, created_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `).run(
         assetId,
         title,
@@ -3181,6 +3301,7 @@ app.post('/api/maintenance/plans', (req, res) => {
         nextDueDate,
         normalizeMaintenanceDate(req.body?.last_completed_at),
         String(req.body?.last_completion_note || '').trim(),
+        responsibleStaffId || null,
         String(req.body?.responsible || '').trim(),
         String(req.body?.priority || 'normal').trim() || 'normal',
         String(req.body?.instructions || '').trim(),
@@ -3197,6 +3318,7 @@ app.put('/api/maintenance/plans/:id', (req, res) => {
 
     const id = Number(req.params.id);
     const assetId = Number(req.body?.asset_id);
+    const responsibleStaffId = Number(req.body?.responsible_staff_id || 0);
     const title = String(req.body?.title || '').trim();
     const intervalDays = Math.max(1, Number(req.body?.interval_days || 180));
     if (!db.prepare('SELECT id FROM maintenance_plans WHERE id = ?').get(id)) {
@@ -3205,11 +3327,14 @@ app.put('/api/maintenance/plans/:id', (req, res) => {
     if (!assetId || !db.prepare('SELECT id FROM maintenance_assets WHERE id = ?').get(assetId)) {
         return res.status(400).json({ success: false, message: 'Wartungsobjekt fehlt' });
     }
+    if (responsibleStaffId && !db.prepare('SELECT id FROM maintenance_staff WHERE id = ?').get(responsibleStaffId)) {
+        return res.status(400).json({ success: false, message: 'Mitarbeiter nicht gefunden' });
+    }
     if (!title) return res.status(400).json({ success: false, message: 'Titel fehlt' });
 
     db.prepare(`
         UPDATE maintenance_plans
-        SET asset_id = ?, title = ?, interval_days = ?, next_due_date = ?, last_completed_at = ?, last_completion_note = ?, responsible = ?, priority = ?, instructions = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+        SET asset_id = ?, title = ?, interval_days = ?, next_due_date = ?, last_completed_at = ?, last_completion_note = ?, responsible_staff_id = ?, responsible = ?, priority = ?, instructions = ?, active = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
     `).run(
         assetId,
@@ -3218,6 +3343,7 @@ app.put('/api/maintenance/plans/:id', (req, res) => {
         normalizeMaintenanceDate(req.body?.next_due_date),
         normalizeMaintenanceDate(req.body?.last_completed_at),
         String(req.body?.last_completion_note || '').trim(),
+        responsibleStaffId || null,
         String(req.body?.responsible || '').trim(),
         String(req.body?.priority || 'normal').trim() || 'normal',
         String(req.body?.instructions || '').trim(),

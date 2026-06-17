@@ -6,6 +6,7 @@ const appState = {
     apartments: [],
     templates: [],
     assets: [],
+    staff: [],
     plans: [],
     openedPlanId: null,
     filters: {
@@ -14,6 +15,8 @@ const appState = {
         apartments: '',
         templates: '',
         assets: '',
+        staff: '',
+        calendar: '',
         plans: ''
     },
     calendarView: 'month',
@@ -44,6 +47,8 @@ function bindNavigation() {
     bindTableSearch('apartment-search', 'apartments');
     bindTableSearch('template-search', 'templates');
     bindTableSearch('asset-search', 'assets');
+    bindTableSearch('staff-search', 'staff');
+    bindTableSearch('calendar-search', 'calendar');
     bindTableSearch('plan-search', 'plans');
 }
 
@@ -60,6 +65,7 @@ function setActiveTab(tabName) {
         apartments: 'Apartments',
         templates: 'Stammdaten',
         assets: 'Wartungsobjekte',
+        staff: 'Mitarbeiter',
         calendar: 'Kalender',
         plans: 'Wartungspläne'
     };
@@ -71,6 +77,7 @@ function bindForms() {
     document.getElementById('apartment-form').addEventListener('submit', submitApartmentForm);
     document.getElementById('template-form').addEventListener('submit', submitTemplateForm);
     document.getElementById('asset-form').addEventListener('submit', submitAssetForm);
+    document.getElementById('staff-form').addEventListener('submit', submitStaffForm);
     document.getElementById('plan-form').addEventListener('submit', submitPlanForm);
     document.getElementById('calendar-quick-form').addEventListener('submit', submitCalendarQuickForm);
     document.getElementById('asset-building').addEventListener('change', syncApartmentOptions);
@@ -101,6 +108,7 @@ async function bootstrapBoard() {
         appState.apartments = result.apartments || [];
         appState.templates = result.templates || [];
         appState.assets = result.assets || [];
+        appState.staff = result.staff || [];
         appState.plans = result.plans || [];
         renderSession(result.currentUser || appState.currentUser);
         renderBoard();
@@ -130,12 +138,15 @@ function renderBoard() {
     renderApartments();
     renderTemplates();
     renderAssets();
+    renderStaff();
     renderCalendar();
     renderPlans();
     fillBuildingSelects();
     fillTemplateSelect();
     fillAssetSelect();
     fillCalendarAssetSelect();
+    fillStaffSelects();
+    renderTemplateCategorySuggestions();
     syncApartmentOptions();
     renderPlanFocusState();
     renderTemplateFileList();
@@ -168,6 +179,8 @@ function renderSummary() {
             plan.asset_name,
             plan.building_name,
             plan.apartment_name,
+            plan.tenant_name,
+            plan.staff_name,
             plan.responsible,
             plan.instructions,
             plan.last_completion_note
@@ -325,6 +338,38 @@ function renderAssets() {
     `).join('');
 }
 
+function renderStaff() {
+    const body = document.getElementById('staff-body');
+    const filteredStaff = appState.staff.filter((member) => matchesSearch([
+        member.name,
+        member.role,
+        member.email,
+        member.phone,
+        member.notes
+    ], appState.filters.staff));
+    if (!filteredStaff.length) {
+        body.innerHTML = `<tr><td colspan="5" class="muted-copy">Noch keine Mitarbeiter angelegt.</td></tr>`;
+        return;
+    }
+    body.innerHTML = filteredStaff.map((member) => `
+        <tr class="clickable-row" onclick="editStaff(${member.id})">
+            <td>
+                <strong>${escapeHtml(member.name)}</strong>
+                <div class="muted-copy">${member.active ? 'Aktiv' : 'Inaktiv'}</div>
+            </td>
+            <td>${escapeHtml(member.role || '-')}</td>
+            <td>${escapeHtml(member.email || member.phone || '-')}</td>
+            <td>${member.plan_count || 0}</td>
+            <td>
+                <div class="table-actions">
+                    <button class="mini-btn" onclick="event.stopPropagation(); editStaff(${member.id})">Bearbeiten</button>
+                    <button class="mini-btn danger" onclick="event.stopPropagation(); deleteStaff(${member.id})">Löschen</button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
 function renderCalendar() {
     updateCalendarControls();
     const surface = document.getElementById('calendar-surface');
@@ -347,7 +392,9 @@ function renderPlans() {
         plan.asset_name,
         plan.building_name,
         plan.apartment_name,
+        plan.tenant_name,
         plan.template_name,
+        plan.staff_name,
         plan.responsible,
         plan.priority,
         plan.instructions,
@@ -363,7 +410,7 @@ function renderPlans() {
             <td>${escapeHtml(plan.asset_name || '-')}</td>
             <td>${escapeHtml(plan.building_name || '-')}</td>
             <td>${formatDate(plan.next_due_date)}</td>
-            <td>${escapeHtml(plan.responsible || '-')}</td>
+            <td>${escapeHtml(getResponsibleLabel(plan))}</td>
             <td>${renderPriority(plan.priority)}</td>
             <td>
                 <div class="table-actions">
@@ -461,6 +508,40 @@ function fillCalendarAssetSelect() {
     document.getElementById('calendar-plan-date').value = appState.selectedDate || new Date().toISOString().slice(0, 10);
 }
 
+function fillStaffSelects() {
+    const planSelect = document.getElementById('plan-staff');
+    const calendarSelect = document.getElementById('calendar-plan-staff');
+    const currentPlanValue = planSelect ? planSelect.value : '';
+    const currentCalendarValue = calendarSelect ? calendarSelect.value : '';
+    const options = ['<option value="">Nicht zugewiesen</option>']
+        .concat(appState.staff.map((member) => `<option value="${member.id}">${escapeHtml(member.name)}${member.role ? ` - ${escapeHtml(member.role)}` : ''}</option>`))
+        .join('');
+    if (planSelect) {
+        planSelect.innerHTML = options;
+        if ([...planSelect.options].some((option) => option.value === currentPlanValue)) {
+            planSelect.value = currentPlanValue;
+        }
+    }
+    if (calendarSelect) {
+        calendarSelect.innerHTML = options;
+        if ([...calendarSelect.options].some((option) => option.value === currentCalendarValue)) {
+            calendarSelect.value = currentCalendarValue;
+        }
+    }
+}
+
+function renderTemplateCategorySuggestions() {
+    const datalist = document.getElementById('template-category-options');
+    if (!datalist) return;
+    const categories = [...new Set(
+        appState.templates
+            .map((template) => String(template.category || '').trim())
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b, 'de', { sensitivity: 'base' }))
+    )];
+    datalist.innerHTML = categories.map((category) => `<option value="${escapeHtml(category)}"></option>`).join('');
+}
+
 function syncApartmentOptions() {
     const buildingId = Number(document.getElementById('asset-building').value || 0);
     const select = document.getElementById('asset-apartment');
@@ -476,6 +557,13 @@ function syncApartmentOptions() {
     if ([...select.options].some((option) => option.value === currentValue)) {
         select.value = currentValue;
     }
+}
+
+function getResponsibleLabel(plan) {
+    const staffName = String(plan.staff_name || '').trim();
+    const responsible = String(plan.responsible || '').trim();
+    if (staffName && responsible) return `${staffName} / ${responsible}`;
+    return staffName || responsible || '-';
 }
 
 function hydrateAssetFromTemplate() {
@@ -555,6 +643,22 @@ async function submitAssetForm(event) {
     resetAssetForm();
 }
 
+async function submitStaffForm(event) {
+    event.preventDefault();
+    const id = document.getElementById('staff-id').value;
+    const payload = {
+        requesterId: appState.currentUser.id,
+        name: document.getElementById('staff-name').value.trim(),
+        role: document.getElementById('staff-role').value.trim(),
+        email: document.getElementById('staff-email').value.trim(),
+        phone: document.getElementById('staff-phone').value.trim(),
+        notes: document.getElementById('staff-notes').value.trim(),
+        active: document.getElementById('staff-active').checked
+    };
+    await saveEntity(id ? `/api/maintenance/staff/${id}` : '/api/maintenance/staff', id ? 'PUT' : 'POST', payload, 'Mitarbeiter gespeichert.');
+    resetStaffForm();
+}
+
 async function submitPlanForm(event) {
     event.preventDefault();
     const id = document.getElementById('plan-id').value;
@@ -566,6 +670,7 @@ async function submitPlanForm(event) {
         next_due_date: document.getElementById('plan-next-due-date').value,
         last_completed_at: document.getElementById('plan-last-completed-at').value,
         last_completion_note: document.getElementById('plan-completion-note').value.trim(),
+        responsible_staff_id: Number(document.getElementById('plan-staff').value || 0) || null,
         responsible: document.getElementById('plan-responsible').value.trim(),
         priority: document.getElementById('plan-priority').value,
         instructions: document.getElementById('plan-instructions').value.trim(),
@@ -583,6 +688,7 @@ async function submitCalendarQuickForm(event) {
         title: document.getElementById('calendar-plan-title').value.trim(),
         interval_days: Number(document.getElementById('calendar-plan-interval-days').value || 180),
         next_due_date: document.getElementById('calendar-plan-date').value,
+        responsible_staff_id: Number(document.getElementById('calendar-plan-staff').value || 0) || null,
         responsible: document.getElementById('calendar-plan-responsible').value.trim(),
         priority: document.getElementById('calendar-plan-priority').value,
         instructions: '',
@@ -610,6 +716,7 @@ async function reloadBoardData() {
     appState.apartments = result.apartments || [];
     appState.templates = result.templates || [];
     appState.assets = result.assets || [];
+    appState.staff = result.staff || [];
     appState.plans = result.plans || [];
     renderBoard();
 }
@@ -643,11 +750,18 @@ function resetAssetForm() {
     document.getElementById('asset-status').value = 'active';
 }
 
+function resetStaffForm() {
+    document.getElementById('staff-form').reset();
+    document.getElementById('staff-id').value = '';
+    document.getElementById('staff-active').checked = true;
+}
+
 function resetPlanForm() {
     document.getElementById('plan-form').reset();
     document.getElementById('plan-id').value = '';
     appState.openedPlanId = null;
     fillAssetSelect();
+    fillStaffSelects();
     document.getElementById('plan-interval-days').value = 180;
     document.getElementById('plan-priority').value = 'normal';
     document.getElementById('plan-active').checked = true;
@@ -657,6 +771,7 @@ function resetPlanForm() {
 
 function resetCalendarQuickForm() {
     document.getElementById('calendar-quick-form').reset();
+    fillStaffSelects();
     document.getElementById('calendar-plan-date').value = appState.selectedDate || new Date().toISOString().slice(0, 10);
     document.getElementById('calendar-plan-interval-days').value = 180;
     document.getElementById('calendar-plan-priority').value = 'normal';
@@ -719,6 +834,19 @@ function editAsset(id) {
     document.getElementById('asset-notes').value = asset.notes || '';
 }
 
+function editStaff(id) {
+    const member = appState.staff.find((item) => Number(item.id) === Number(id));
+    if (!member) return;
+    setActiveTab('staff');
+    document.getElementById('staff-id').value = member.id;
+    document.getElementById('staff-name').value = member.name || '';
+    document.getElementById('staff-role').value = member.role || '';
+    document.getElementById('staff-email').value = member.email || '';
+    document.getElementById('staff-phone').value = member.phone || '';
+    document.getElementById('staff-notes').value = member.notes || '';
+    document.getElementById('staff-active').checked = !!member.active;
+}
+
 function editPlan(id) {
     const plan = appState.plans.find((item) => Number(item.id) === Number(id));
     if (!plan) return;
@@ -731,6 +859,7 @@ function editPlan(id) {
     document.getElementById('plan-next-due-date').value = plan.next_due_date || '';
     document.getElementById('plan-last-completed-at').value = plan.last_completed_at || '';
     document.getElementById('plan-completion-note').value = plan.last_completion_note || '';
+    document.getElementById('plan-staff').value = plan.responsible_staff_id || '';
     document.getElementById('plan-responsible').value = plan.responsible || '';
     document.getElementById('plan-priority').value = plan.priority || 'normal';
     document.getElementById('plan-instructions').value = plan.instructions || '';
@@ -761,6 +890,11 @@ async function deleteTemplate(id) {
 async function deleteAsset(id) {
     if (!confirm('Wartungsobjekt wirklich löschen?')) return;
     await deleteEntity(`/api/maintenance/assets/${id}`);
+}
+
+async function deleteStaff(id) {
+    if (!confirm('Mitarbeiter wirklich löschen?')) return;
+    await deleteEntity(`/api/maintenance/staff/${id}`);
 }
 
 async function deletePlan(id) {
@@ -795,6 +929,9 @@ function updateCalendarControls() {
         label = appState.calendarDate.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
     }
     document.getElementById('calendar-range-label').textContent = label;
+    document.getElementById('calendar-range-subtitle').textContent = appState.filters.calendar
+        ? `Gefiltert nach: ${appState.filters.calendar}`
+        : 'Fällige Wartungen im gewählten Zeitraum';
 }
 
 function shiftCalendarRange(direction) {
@@ -992,9 +1129,27 @@ function handleCalendarEventClick(event, planId) {
 }
 
 function getPlansForDate(dateString) {
-    return appState.plans
+    return getFilteredCalendarPlans()
         .filter((plan) => plan.active && plan.next_due_date === dateString)
         .sort((a, b) => String(a.priority || '').localeCompare(String(b.priority || '')));
+}
+
+function getFilteredCalendarPlans() {
+    return appState.plans.filter((plan) => matchesSearch([
+        plan.title,
+        plan.asset_name,
+        plan.building_name,
+        plan.apartment_name,
+        plan.tenant_name,
+        plan.template_name,
+        plan.template_description,
+        plan.template_checklist,
+        plan.staff_name,
+        plan.responsible,
+        plan.priority,
+        plan.instructions,
+        plan.last_completion_note
+    ], appState.filters.calendar));
 }
 
 function startOfWeek(baseDate) {
