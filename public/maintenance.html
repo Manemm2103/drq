@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DR-MAINTENANCE BOARD</title>
+    <link rel="icon" type="image/svg+xml" href="/drq-logo.svg?v=1">
+    <link rel="stylesheet" href="maintenance.css?v=1">
+</head>
+<body>
+    <div class="maintenance-shell">
+        <aside class="maintenance-sidebar">
+            <div class="brand-block">
+                <div class="brand-kicker">DRQ Suite</div>
+                <h1>DR-MAINTENANCE BOARD</h1>
+                <p class="brand-subtitle">Wartung, Anlagen und Fälligkeiten zentral steuern</p>
+            </div>
+
+            <div class="session-card">
+                <div class="session-label">Angemeldet als</div>
+                <div id="session-user" class="session-user">-</div>
+                <div id="session-role" class="session-role">-</div>
+            </div>
+
+            <nav class="maintenance-nav">
+                <button class="nav-btn active" data-tab="dashboard">Dashboard</button>
+                <button class="nav-btn" data-tab="buildings">Gebäude</button>
+                <button class="nav-btn" data-tab="apartments">Apartments</button>
+                <button class="nav-btn" data-tab="templates">Stammdaten</button>
+                <button class="nav-btn" data-tab="assets">Wartungsobjekte</button>
+                <button class="nav-btn" data-tab="plans">Wartungspläne</button>
+            </nav>
+
+            <div class="sidebar-actions">
+                <button class="action-btn secondary" onclick="window.location.href='/'">Zurück zu DRQ</button>
+            </div>
+        </aside>
+
+        <main class="maintenance-main">
+            <header class="maintenance-header">
+                <div>
+                    <div class="header-eyebrow">Eigenständige Wartungssoftware</div>
+                    <h2 id="tab-title">Dashboard</h2>
+                </div>
+                <div class="header-right">
+                    <div id="board-version" class="board-version">Version 1.2.0</div>
+                </div>
+            </header>
+
+            <div id="maintenance-alert" class="alert" hidden></div>
+
+            <section id="access-denied" class="access-state" hidden>
+                <h3>Kein Zugriff</h3>
+                <p>Für diesen DRQ-User ist das Wartungsboard aktuell nicht freigeschaltet.</p>
+                <button class="action-btn secondary" onclick="window.location.href='/'">Zurück zu DRQ</button>
+            </section>
+
+            <section id="maintenance-content" hidden>
+                <div class="tab-panel active" data-panel="dashboard">
+                    <div class="summary-grid">
+                        <div class="summary-tile"><span>Gebäude</span><strong id="summary-buildings">0</strong></div>
+                        <div class="summary-tile"><span>Apartments</span><strong id="summary-apartments">0</strong></div>
+                        <div class="summary-tile"><span>Objekte</span><strong id="summary-assets">0</strong></div>
+                        <div class="summary-tile"><span>Aktive Pläne</span><strong id="summary-active-plans">0</strong></div>
+                        <div class="summary-tile warn"><span>Bald fällig</span><strong id="summary-due-soon">0</strong></div>
+                        <div class="summary-tile danger"><span>Überfällig</span><strong id="summary-overdue">0</strong></div>
+                    </div>
+
+                    <div class="surface">
+                        <div class="surface-header">
+                            <h3>Nächste Wartungen</h3>
+                            <span>Die wichtigsten Fälligkeiten zuerst</span>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Plan</th>
+                                        <th>Objekt</th>
+                                        <th>Gebäude</th>
+                                        <th>Nächster Termin</th>
+                                        <th>Priorität</th>
+                                        <th>Aktion</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dashboard-plans-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-panel" data-panel="buildings">
+                    <div class="editor-layout">
+                        <div class="surface">
+                            <div class="surface-header">
+                                <h3>Gebäude anlegen</h3>
+                                <span>Standorte und Liegenschaften verwalten</span>
+                            </div>
+                            <form id="building-form" class="stack-form">
+                                <input type="hidden" id="building-id">
+                                <label>Name<input type="text" id="building-name" required></label>
+                                <label>Code<input type="text" id="building-code"></label>
+                                <label>Adresse<input type="text" id="building-address"></label>
+                                <label>Ort<input type="text" id="building-city"></label>
+                                <label>Notizen<textarea id="building-notes" rows="4"></textarea></label>
+                                <div class="form-actions">
+                                    <button type="submit" class="action-btn">Speichern</button>
+                                    <button type="button" class="action-btn secondary" onclick="resetBuildingForm()">Neu</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <div class="surface">
+                            <div class="surface-header">
+                                <h3>Gebäudeliste</h3>
+                                <span>Mit Apartment- und Objektanzahl</span>
+                            </div>
+                            <div class="table-wrap">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Code</th>
+                                            <th>Ort</th>
+                                            <th>Apartments</th>
+                                            <th>Objekte</th>
+                                            <th>Aktionen</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="buildings-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-panel" data-panel="apartments">
+                    <div class="editor-layout">
+                        <div class="surface">
+                            <div class="surface-header">
+                                <h3>Apartment anlegen</h3>
+                                <span>Einheiten innerhalb eines Gebäudes erfassen</span>
+                            </div>
+                            <form id="apartment-form" class="stack-form">
+                                <input type="hidden" id="apartment-id">
+                                <label>Gebäude<select id="apartment-building" required></select></label>
+                                <label>Name<input type="text" id="apartment-name" required></label>
+                                <label>Stockwerk<input type="text" id="apartment-floor"></label>
+                                <label>Einheit / Nummer<input type="text" id="apartment-unit-number"></label>
+                                <label>Mieter / Eigentümer<input type="text" id="apartment-tenant-name"></label>
+                                <label>Notizen<textarea id="apartment-notes" rows="4"></textarea></label>
+                                <div class="form-actions">
+                                    <button type="submit" class="action-btn">Speichern</button>
+                                    <button type="button" class="action-btn secondary" onclick="resetApartmentForm()">Neu</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <div class="surface">
+                            <div class="surface-header">
+                                <h3>Apartments</h3>
+                                <span>Nach Gebäude sortiert</span>
+                            </div>
+                            <div class="table-wrap">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Gebäude</th>
+                                            <th>Name</th>
+                                            <th>Stockwerk</th>
+                                            <th>Mieter</th>
+                                            <th>Objekte</th>
+                                            <th>Aktionen</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="apartments-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-panel" data-panel="templates">
+                    <div class="editor-layout">
+                        <div class="surface">
+                            <div class="surface-header">
+                                <h3>Wartungsstammdaten</h3>
+                                <span>Klimaanlage, Fenster, Dampfbad und mehr</span>
+                            </div>
+                            <form id="template-form" class="stack-form">
+                                <input type="hidden" id="template-id">
+                                <label>Name<input type="text" id="template-name" required></label>
+                                <label>Kategorie<input type="text" id="template-category"></label>
+                                <label>Hersteller<input type="text" id="template-manufacturer"></label>
+                                <label>Standardintervall (Tage)<input type="number" id="template-default-interval" min="1" value="180"></label>
+                                <label>Beschreibung<textarea id="template-description" rows="3"></textarea></label>
+                                <label>Checkliste<textarea id="template-checklist" rows="5" placeholder="z.B. Filter prüfen, Dichtung kontrollieren"></textarea></label>
+                                <label class="inline-check"><input type="checkbox" id="template-active" checked> Aktiv</label>
+                                <div class="form-actions">
+                                    <button type="submit" class="action-btn">Speichern</button>
+                                    <button type="button" class="action-btn secondary" onclick="resetTemplateForm()">Neu</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <div class="surface">
+                            <div class="surface-header">
+                                <h3>Stammdatenliste</h3>
+                                <span>Basis für Wartungsobjekte und Pläne</span>
+                            </div>
+                            <div class="table-wrap">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Kategorie</th>
+                                            <th>Intervall</th>
+                                            <th>Aktiv</th>
+                                            <th>Objekte</th>
+                                            <th>Aktionen</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="templates-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-panel" data-panel="assets">
+                    <div class="editor-layout">
+                        <div class="surface">
+                            <div class="surface-header">
+                                <h3>Wartungsobjekt anlegen</h3>
+                                <span>Konkrete Einbauten und Anlagen im Bestand</span>
+                            </div>
+                            <form id="asset-form" class="stack-form">
+                                <input type="hidden" id="asset-id">
+                                <label>Stammdatensatz<select id="asset-template" required></select></label>
+                                <label>Gebäude<select id="asset-building" required></select></label>
+                                <label>Apartment<select id="asset-apartment"></select></label>
+                                <label>Name<input type="text" id="asset-name" required></label>
+                                <label>Ort / Raum<input type="text" id="asset-location"></label>
+                                <label>Seriennummer<input type="text" id="asset-serial-number"></label>
+                                <label>Status
+                                    <select id="asset-status">
+                                        <option value="active">Aktiv</option>
+                                        <option value="inactive">Inaktiv</option>
+                                        <option value="repair">In Reparatur</option>
+                                    </select>
+                                </label>
+                                <label>Installiert am<input type="date" id="asset-installed-on"></label>
+                                <label>Notizen<textarea id="asset-notes" rows="4"></textarea></label>
+                                <div class="form-actions">
+                                    <button type="submit" class="action-btn">Speichern</button>
+                                    <button type="button" class="action-btn secondary" onclick="resetAssetForm()">Neu</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <div class="surface">
+                            <div class="surface-header">
+                                <h3>Wartungsobjekte</h3>
+                                <span>Gebäude, Apartments und Pläne im Überblick</span>
+                            </div>
+                            <div class="table-wrap">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Stammdatensatz</th>
+                                            <th>Gebäude</th>
+                                            <th>Apartment</th>
+                                            <th>Status</th>
+                                            <th>Pläne</th>
+                                            <th>Aktionen</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="assets-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-panel" data-panel="plans">
+                    <div class="editor-layout">
+                        <div class="surface">
+                            <div class="surface-header">
+                                <h3>Wartungsplan anlegen</h3>
+                                <span>Intervalle, Verantwortliche und Fälligkeiten</span>
+                            </div>
+                            <form id="plan-form" class="stack-form">
+                                <input type="hidden" id="plan-id">
+                                <label>Wartungsobjekt<select id="plan-asset" required></select></label>
+                                <label>Titel<input type="text" id="plan-title" required></label>
+                                <label>Intervall (Tage)<input type="number" id="plan-interval-days" min="1" value="180"></label>
+                                <label>Nächster Termin<input type="date" id="plan-next-due-date"></label>
+                                <label>Zuletzt erledigt<input type="date" id="plan-last-completed-at"></label>
+                                <label>Verantwortlich<input type="text" id="plan-responsible"></label>
+                                <label>Priorität
+                                    <select id="plan-priority">
+                                        <option value="low">Niedrig</option>
+                                        <option value="normal" selected>Normal</option>
+                                        <option value="high">Hoch</option>
+                                        <option value="critical">Kritisch</option>
+                                    </select>
+                                </label>
+                                <label>Anweisung / Ablauf<textarea id="plan-instructions" rows="5"></textarea></label>
+                                <label class="inline-check"><input type="checkbox" id="plan-active" checked> Aktiv</label>
+                                <div class="form-actions">
+                                    <button type="submit" class="action-btn">Speichern</button>
+                                    <button type="button" class="action-btn secondary" onclick="resetPlanForm()">Neu</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <div class="surface">
+                            <div class="surface-header">
+                                <h3>Wartungspläne</h3>
+                                <span>Mit Fälligkeit und Sofort-Aktionen</span>
+                            </div>
+                            <div class="table-wrap">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Titel</th>
+                                            <th>Objekt</th>
+                                            <th>Gebäude</th>
+                                            <th>Nächster Termin</th>
+                                            <th>Verantwortlich</th>
+                                            <th>Priorität</th>
+                                            <th>Aktionen</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="plans-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="maintenance.js?v=1"></script>
+</body>
+</html>

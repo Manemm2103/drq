@@ -21,7 +21,7 @@ const replyContent = document.getElementById('reply-preview-content');
 let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
-let runtimeVersionLabel = 'Version 1.1.6';
+let runtimeVersionLabel = 'Version 1.2.0';
 let currentChatMessages = [];
 let activeSearchTab = 'text';
 let contactStateCache = {
@@ -37,6 +37,7 @@ let mutedChatsCache = {};
 const soundUhOh = document.getElementById('sound-uhoh');
 const soundRing = document.getElementById('sound-ring');
 const soundMsg = document.getElementById('sound-msg');
+const maintenanceBtn = document.getElementById('maintenance-btn');
 const adminBtn = document.getElementById('admin-btn');
 const adminModal = document.getElementById('admin-modal');
 const profileModal = document.getElementById('profile-modal');
@@ -139,6 +140,9 @@ function restoreSession(user) {
         adminBtn.style.display = 'block';
     } else {
         adminBtn.style.display = 'none';
+    }
+    if (maintenanceBtn) {
+        maintenanceBtn.style.display = (currentUser.role === 'admin' || currentUser.can_access_maintenance_board) ? 'inline-flex' : 'none';
     }
 
     loginScreen.classList.remove('active');
@@ -740,6 +744,13 @@ function closeAdmin() {
     adminModal.style.display = 'none';
 }
 
+function openMaintenanceBoard() {
+    if (!currentUser || !(currentUser.role === 'admin' || currentUser.can_access_maintenance_board)) {
+        return alert('Kein Zugriff auf das Wartungsboard.');
+    }
+    window.location.href = '/maintenance.html';
+}
+
 async function loadUsers() {
     try {
         const res = await axios.get('/api/admin/users');
@@ -792,6 +803,15 @@ async function loadUsers() {
             label.appendChild(checkbox);
             label.appendChild(document.createTextNode(' Chat'));
             topRow.appendChild(label);
+
+            const maintenanceLabel = document.createElement('label');
+            const maintenanceCheckbox = document.createElement('input');
+            maintenanceCheckbox.type = 'checkbox';
+            maintenanceCheckbox.checked = user.can_access_maintenance_board !== 0;
+            maintenanceCheckbox.onchange = () => toggleMaintenanceBoardAccess(user.id, maintenanceCheckbox.checked);
+            maintenanceLabel.appendChild(maintenanceCheckbox);
+            maintenanceLabel.appendChild(document.createTextNode(' Maintenance'));
+            topRow.appendChild(maintenanceLabel);
 
             const roleSelect = document.createElement('select');
             roleSelect.innerHTML = '<option value="user">User</option><option value="admin">Admin</option>';
@@ -879,6 +899,20 @@ async function toggleChat(id, enabled) {
         console.error(err);
         alert("Fehler beim Ändern des Chat-Status!");
         loadUsers(); // Revert UI on error
+    }
+}
+
+async function toggleMaintenanceBoardAccess(id, enabled) {
+    try {
+        await axios.put(`/api/admin/users/${id}/toggle-maintenance-board`, {
+            requesterId: currentUser.id,
+            can_access_maintenance_board: enabled
+        });
+        loadUsers();
+    } catch (err) {
+        console.error(err);
+        alert("Fehler beim Ändern des Wartungsboard-Zugriffs!");
+        loadUsers();
     }
 }
 

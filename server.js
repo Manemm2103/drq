@@ -488,6 +488,60 @@ function normalizeUsernameInput(value) {
     return /^\d+$/.test(normalized.replace(/\s+/g, '')) ? normalized.replace(/\s+/g, '') : normalized;
 }
 
+function getRequesterIdFromRequest(req) {
+    const raw = req.body?.requesterId ?? req.query?.requesterId ?? req.params?.requesterId;
+    const requesterId = Number(raw);
+    return Number.isFinite(requesterId) && requesterId > 0 ? requesterId : 0;
+}
+
+function getRequesterUser(req) {
+    const requesterId = getRequesterIdFromRequest(req);
+    if (!requesterId) return null;
+    return db.prepare(`
+        SELECT id, uin, username, display_name, role, can_access_maintenance_board
+        FROM users
+        WHERE id = ?
+    `).get(requesterId) || null;
+}
+
+function requireAdminUser(req, res) {
+    const requester = getRequesterUser(req);
+    if (!requester || requester.role !== 'admin') {
+        res.status(403).json({ success: false, message: 'Keine Berechtigung' });
+        return null;
+    }
+    return requester;
+}
+
+function requireMaintenanceUser(req, res) {
+    const requester = getRequesterUser(req);
+    if (!requester) {
+        res.status(401).json({ success: false, message: 'Bitte zuerst anmelden' });
+        return null;
+    }
+    if (requester.role === 'admin' || Number(requester.can_access_maintenance_board) === 1) {
+        return requester;
+    }
+    res.status(403).json({ success: false, message: 'Kein Zugriff auf das Wartungsboard' });
+    return null;
+}
+
+function normalizeMaintenanceDate(value) {
+    const normalized = String(value || '').trim();
+    if (!normalized) return '';
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toISOString().slice(0, 10);
+}
+
+function addDaysIso(baseDate, days) {
+    const start = baseDate ? new Date(baseDate) : new Date();
+    if (Number.isNaN(start.getTime())) return '';
+    const next = new Date(start);
+    next.setDate(next.getDate() + Number(days || 0));
+    return next.toISOString().slice(0, 10);
+}
+
 function logFailedLogin(req, rawUsername, normalizedUsername, password) {
     const debug = {
         event: 'login_failed',
@@ -572,6 +626,7 @@ db.exec(`
         custom_status TEXT DEFAULT '', -- New: User defined status message
         public_key TEXT DEFAULT '', -- E2EE: Public Key (Base64)
         can_chat INTEGER DEFAULT 1, -- 1 = yes, 0 = no
+        can_access_maintenance_board INTEGER DEFAULT 0,
         is_integration INTEGER DEFAULT 0,
         owner_user_id INTEGER
     );
@@ -620,6 +675,77 @@ db.exec(`
         FOREIGN KEY(sender_id) REFERENCES users(id),
         FOREIGN KEY(receiver_id) REFERENCES users(id)
     );
+    CREATE TABLE IF NOT EXISTS maintenance_buildings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        code TEXT DEFAULT '',
+        address TEXT DEFAULT '',
+        city TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        created_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS maintenance_apartments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        building_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        floor TEXT DEFAULT '',
+        unit_number TEXT DEFAULT '',
+        tenant_name TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        created_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(building_id) REFERENCES maintenance_buildings(id)
+    );
+    CREATE TABLE IF NOT EXISTS maintenance_asset_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        category TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        manufacturer TEXT DEFAULT '',
+        default_interval_days INTEGER DEFAULT 180,
+        checklist TEXT DEFAULT '',
+        active INTEGER DEFAULT 1,
+        created_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS maintenance_assets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_id INTEGER NOT NULL,
+        building_id INTEGER NOT NULL,
+        apartment_id INTEGER,
+        name TEXT NOT NULL,
+        location TEXT DEFAULT '',
+        serial_number TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        installed_on TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        created_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(template_id) REFERENCES maintenance_asset_templates(id),
+        FOREIGN KEY(building_id) REFERENCES maintenance_buildings(id),
+        FOREIGN KEY(apartment_id) REFERENCES maintenance_apartments(id)
+    );
+    CREATE TABLE IF NOT EXISTS maintenance_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        asset_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        interval_days INTEGER DEFAULT 180,
+        next_due_date TEXT DEFAULT '',
+        last_completed_at TEXT DEFAULT '',
+        responsible TEXT DEFAULT '',
+        priority TEXT DEFAULT 'normal',
+        instructions TEXT DEFAULT '',
+        active INTEGER DEFAULT 1,
+        created_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(asset_id) REFERENCES maintenance_assets(id)
+    );
 `);
 
 // Migrations
@@ -644,6 +770,10 @@ try {
     if (!userCols.some(c => c.name === 'is_integration')) {
         db.prepare("ALTER TABLE users ADD COLUMN is_integration INTEGER DEFAULT 0").run();
         console.log("Migration: Added is_integration to users");
+    }
+    if (!userCols.some(c => c.name === 'can_access_maintenance_board')) {
+        db.prepare("ALTER TABLE users ADD COLUMN can_access_maintenance_board INTEGER DEFAULT 0").run();
+        console.log("Migration: Added can_access_maintenance_board to users");
     }
     if (!userCols.some(c => c.name === 'owner_user_id')) {
         db.prepare("ALTER TABLE users ADD COLUMN owner_user_id INTEGER").run();
@@ -701,6 +831,72 @@ try {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, muted_user_id)
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_buildings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            code TEXT DEFAULT '',
+            address TEXT DEFAULT '',
+            city TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_apartments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            building_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            floor TEXT DEFAULT '',
+            unit_number TEXT DEFAULT '',
+            tenant_name TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_asset_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            category TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            manufacturer TEXT DEFAULT '',
+            default_interval_days INTEGER DEFAULT 180,
+            checklist TEXT DEFAULT '',
+            active INTEGER DEFAULT 1,
+            created_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_assets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            template_id INTEGER NOT NULL,
+            building_id INTEGER NOT NULL,
+            apartment_id INTEGER,
+            name TEXT NOT NULL,
+            location TEXT DEFAULT '',
+            serial_number TEXT DEFAULT '',
+            status TEXT DEFAULT 'active',
+            installed_on TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            asset_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            interval_days INTEGER DEFAULT 180,
+            next_due_date TEXT DEFAULT '',
+            last_completed_at TEXT DEFAULT '',
+            responsible TEXT DEFAULT '',
+            priority TEXT DEFAULT 'normal',
+            instructions TEXT DEFAULT '',
+            active INTEGER DEFAULT 1,
+            created_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
     `);
 } catch (e) { console.error("Migration error:", e); }
@@ -1430,7 +1626,8 @@ app.post('/api/login', (req, res) => {
                 role: user.role,
                 chat_bg: user.chat_bg,
                 theme_key: user.theme_key || DEFAULT_THEME_KEY,
-                custom_status: user.custom_status || ''
+                custom_status: user.custom_status || '',
+                can_access_maintenance_board: Number(user.can_access_maintenance_board || 0) === 1
             } 
         });
     } else {
@@ -1486,7 +1683,8 @@ app.put('/api/profile/:id', (req, res) => {
             avatar: updated.avatar, role: updated.role, chat_bg: updated.chat_bg,
             theme_key: updated.theme_key || DEFAULT_THEME_KEY,
             custom_status: updated.custom_status || '',
-            public_key: updated.public_key || ''
+            public_key: updated.public_key || '',
+            can_access_maintenance_board: Number(updated.can_access_maintenance_board || 0) === 1
         }});
     } catch (e) {
         console.error(e);
@@ -1996,6 +2194,529 @@ app.get('/api/keys/:userId', (req, res) => {
     res.json({ publicKey: user.public_key });
 });
 
+function listMaintenanceBuildings() {
+    return db.prepare(`
+        SELECT
+            b.*,
+            COUNT(DISTINCT a.id) AS apartment_count,
+            COUNT(DISTINCT ma.id) AS asset_count
+        FROM maintenance_buildings b
+        LEFT JOIN maintenance_apartments a ON a.building_id = b.id
+        LEFT JOIN maintenance_assets ma ON ma.building_id = b.id
+        GROUP BY b.id
+        ORDER BY b.name COLLATE NOCASE ASC
+    `).all().map((row) => ({
+        ...row,
+        apartment_count: Number(row.apartment_count || 0),
+        asset_count: Number(row.asset_count || 0)
+    }));
+}
+
+function listMaintenanceApartments() {
+    return db.prepare(`
+        SELECT
+            a.*,
+            b.name AS building_name,
+            COUNT(ma.id) AS asset_count
+        FROM maintenance_apartments a
+        JOIN maintenance_buildings b ON b.id = a.building_id
+        LEFT JOIN maintenance_assets ma ON ma.apartment_id = a.id
+        GROUP BY a.id
+        ORDER BY b.name COLLATE NOCASE ASC, a.name COLLATE NOCASE ASC
+    `).all().map((row) => ({
+        ...row,
+        asset_count: Number(row.asset_count || 0)
+    }));
+}
+
+function listMaintenanceTemplates() {
+    return db.prepare(`
+        SELECT
+            t.*,
+            COUNT(ma.id) AS asset_count
+        FROM maintenance_asset_templates t
+        LEFT JOIN maintenance_assets ma ON ma.template_id = t.id
+        GROUP BY t.id
+        ORDER BY t.category COLLATE NOCASE ASC, t.name COLLATE NOCASE ASC
+    `).all().map((row) => ({
+        ...row,
+        active: Number(row.active || 0) === 1,
+        default_interval_days: Number(row.default_interval_days || 0),
+        asset_count: Number(row.asset_count || 0)
+    }));
+}
+
+function listMaintenanceAssets() {
+    return db.prepare(`
+        SELECT
+            ma.*,
+            t.name AS template_name,
+            t.category AS template_category,
+            b.name AS building_name,
+            a.name AS apartment_name,
+            COUNT(mp.id) AS plan_count
+        FROM maintenance_assets ma
+        JOIN maintenance_asset_templates t ON t.id = ma.template_id
+        JOIN maintenance_buildings b ON b.id = ma.building_id
+        LEFT JOIN maintenance_apartments a ON a.id = ma.apartment_id
+        LEFT JOIN maintenance_plans mp ON mp.asset_id = ma.id
+        GROUP BY ma.id
+        ORDER BY b.name COLLATE NOCASE ASC, ma.name COLLATE NOCASE ASC
+    `).all().map((row) => ({
+        ...row,
+        plan_count: Number(row.plan_count || 0)
+    }));
+}
+
+function listMaintenancePlans() {
+    return db.prepare(`
+        SELECT
+            mp.*,
+            ma.name AS asset_name,
+            b.name AS building_name,
+            a.name AS apartment_name,
+            t.name AS template_name
+        FROM maintenance_plans mp
+        JOIN maintenance_assets ma ON ma.id = mp.asset_id
+        JOIN maintenance_buildings b ON b.id = ma.building_id
+        LEFT JOIN maintenance_apartments a ON a.id = ma.apartment_id
+        LEFT JOIN maintenance_asset_templates t ON t.id = ma.template_id
+        ORDER BY
+            CASE WHEN COALESCE(mp.next_due_date, '') = '' THEN 1 ELSE 0 END ASC,
+            mp.next_due_date ASC,
+            mp.title COLLATE NOCASE ASC
+    `).all().map((row) => ({
+        ...row,
+        active: Number(row.active || 0) === 1,
+        interval_days: Number(row.interval_days || 0)
+    }));
+}
+
+function getMaintenanceSummary() {
+    const today = new Date().toISOString().slice(0, 10);
+    const soon = addDaysIso(today, 30);
+    return {
+        buildings: Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_buildings').get() || {}).count || 0),
+        apartments: Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_apartments').get() || {}).count || 0),
+        templates: Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_asset_templates').get() || {}).count || 0),
+        assets: Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_assets').get() || {}).count || 0),
+        activePlans: Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_plans WHERE active = 1').get() || {}).count || 0),
+        overduePlans: Number((db.prepare("SELECT COUNT(*) AS count FROM maintenance_plans WHERE active = 1 AND COALESCE(next_due_date, '') <> '' AND next_due_date < ?").get(today) || {}).count || 0),
+        dueSoonPlans: Number((db.prepare("SELECT COUNT(*) AS count FROM maintenance_plans WHERE active = 1 AND COALESCE(next_due_date, '') <> '' AND next_due_date >= ? AND next_due_date <= ?").get(today, soon) || {}).count || 0)
+    };
+}
+
+app.get('/api/maintenance/bootstrap', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    res.json({
+        success: true,
+        currentUser: {
+            id: requester.id,
+            username: requester.username,
+            display_name: requester.display_name || '',
+            role: requester.role
+        },
+        summary: getMaintenanceSummary(),
+        buildings: listMaintenanceBuildings(),
+        apartments: listMaintenanceApartments(),
+        templates: listMaintenanceTemplates(),
+        assets: listMaintenanceAssets(),
+        plans: listMaintenancePlans()
+    });
+});
+
+app.post('/api/maintenance/buildings', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ success: false, message: 'Gebäudename fehlt' });
+
+    const result = db.prepare(`
+        INSERT INTO maintenance_buildings (name, code, address, city, notes, created_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+        name,
+        String(req.body?.code || '').trim(),
+        String(req.body?.address || '').trim(),
+        String(req.body?.city || '').trim(),
+        String(req.body?.notes || '').trim(),
+        requester.id
+    );
+
+    res.json({ success: true, id: result.lastInsertRowid });
+});
+
+app.put('/api/maintenance/buildings/:id', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    const name = String(req.body?.name || '').trim();
+    if (!db.prepare('SELECT id FROM maintenance_buildings WHERE id = ?').get(id)) {
+        return res.status(404).json({ success: false, message: 'Gebäude nicht gefunden' });
+    }
+    if (!name) return res.status(400).json({ success: false, message: 'Gebäudename fehlt' });
+
+    db.prepare(`
+        UPDATE maintenance_buildings
+        SET name = ?, code = ?, address = ?, city = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(
+        name,
+        String(req.body?.code || '').trim(),
+        String(req.body?.address || '').trim(),
+        String(req.body?.city || '').trim(),
+        String(req.body?.notes || '').trim(),
+        id
+    );
+
+    res.json({ success: true });
+});
+
+app.delete('/api/maintenance/buildings/:id', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    const apartmentCount = Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_apartments WHERE building_id = ?').get(id) || {}).count || 0);
+    const assetCount = Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_assets WHERE building_id = ?').get(id) || {}).count || 0);
+    if (apartmentCount || assetCount) {
+        return res.status(400).json({ success: false, message: 'Gebäude enthält noch Apartments oder Wartungsobjekte' });
+    }
+    db.prepare('DELETE FROM maintenance_buildings WHERE id = ?').run(id);
+    res.json({ success: true });
+});
+
+app.post('/api/maintenance/apartments', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const buildingId = Number(req.body?.building_id);
+    const name = String(req.body?.name || '').trim();
+    if (!buildingId || !db.prepare('SELECT id FROM maintenance_buildings WHERE id = ?').get(buildingId)) {
+        return res.status(400).json({ success: false, message: 'Gebäude fehlt' });
+    }
+    if (!name) return res.status(400).json({ success: false, message: 'Apartmentname fehlt' });
+
+    const result = db.prepare(`
+        INSERT INTO maintenance_apartments (building_id, name, floor, unit_number, tenant_name, notes, created_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+        buildingId,
+        name,
+        String(req.body?.floor || '').trim(),
+        String(req.body?.unit_number || '').trim(),
+        String(req.body?.tenant_name || '').trim(),
+        String(req.body?.notes || '').trim(),
+        requester.id
+    );
+
+    res.json({ success: true, id: result.lastInsertRowid });
+});
+
+app.put('/api/maintenance/apartments/:id', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    const buildingId = Number(req.body?.building_id);
+    const name = String(req.body?.name || '').trim();
+    if (!db.prepare('SELECT id FROM maintenance_apartments WHERE id = ?').get(id)) {
+        return res.status(404).json({ success: false, message: 'Apartment nicht gefunden' });
+    }
+    if (!buildingId || !db.prepare('SELECT id FROM maintenance_buildings WHERE id = ?').get(buildingId)) {
+        return res.status(400).json({ success: false, message: 'Gebäude fehlt' });
+    }
+    if (!name) return res.status(400).json({ success: false, message: 'Apartmentname fehlt' });
+
+    db.prepare(`
+        UPDATE maintenance_apartments
+        SET building_id = ?, name = ?, floor = ?, unit_number = ?, tenant_name = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(
+        buildingId,
+        name,
+        String(req.body?.floor || '').trim(),
+        String(req.body?.unit_number || '').trim(),
+        String(req.body?.tenant_name || '').trim(),
+        String(req.body?.notes || '').trim(),
+        id
+    );
+
+    res.json({ success: true });
+});
+
+app.delete('/api/maintenance/apartments/:id', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    const assetCount = Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_assets WHERE apartment_id = ?').get(id) || {}).count || 0);
+    if (assetCount) {
+        return res.status(400).json({ success: false, message: 'Apartment enthält noch Wartungsobjekte' });
+    }
+    db.prepare('DELETE FROM maintenance_apartments WHERE id = ?').run(id);
+    res.json({ success: true });
+});
+
+app.post('/api/maintenance/templates', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ success: false, message: 'Stammdatename fehlt' });
+
+    const result = db.prepare(`
+        INSERT INTO maintenance_asset_templates (name, category, description, manufacturer, default_interval_days, checklist, active, created_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+        name,
+        String(req.body?.category || '').trim(),
+        String(req.body?.description || '').trim(),
+        String(req.body?.manufacturer || '').trim(),
+        Math.max(1, Number(req.body?.default_interval_days || 180)),
+        String(req.body?.checklist || '').trim(),
+        req.body?.active === false ? 0 : 1,
+        requester.id
+    );
+
+    res.json({ success: true, id: result.lastInsertRowid });
+});
+
+app.put('/api/maintenance/templates/:id', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    const name = String(req.body?.name || '').trim();
+    if (!db.prepare('SELECT id FROM maintenance_asset_templates WHERE id = ?').get(id)) {
+        return res.status(404).json({ success: false, message: 'Stammdatensatz nicht gefunden' });
+    }
+    if (!name) return res.status(400).json({ success: false, message: 'Stammdatename fehlt' });
+
+    db.prepare(`
+        UPDATE maintenance_asset_templates
+        SET name = ?, category = ?, description = ?, manufacturer = ?, default_interval_days = ?, checklist = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(
+        name,
+        String(req.body?.category || '').trim(),
+        String(req.body?.description || '').trim(),
+        String(req.body?.manufacturer || '').trim(),
+        Math.max(1, Number(req.body?.default_interval_days || 180)),
+        String(req.body?.checklist || '').trim(),
+        req.body?.active === false ? 0 : 1,
+        id
+    );
+
+    res.json({ success: true });
+});
+
+app.delete('/api/maintenance/templates/:id', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    const assetCount = Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_assets WHERE template_id = ?').get(id) || {}).count || 0);
+    if (assetCount) {
+        return res.status(400).json({ success: false, message: 'Stammdatensatz wird noch von Wartungsobjekten genutzt' });
+    }
+    db.prepare('DELETE FROM maintenance_asset_templates WHERE id = ?').run(id);
+    res.json({ success: true });
+});
+
+app.post('/api/maintenance/assets', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const templateId = Number(req.body?.template_id);
+    const buildingId = Number(req.body?.building_id);
+    const apartmentId = req.body?.apartment_id ? Number(req.body.apartment_id) : null;
+    const name = String(req.body?.name || '').trim();
+    if (!templateId || !db.prepare('SELECT id FROM maintenance_asset_templates WHERE id = ?').get(templateId)) {
+        return res.status(400).json({ success: false, message: 'Stammdatensatz fehlt' });
+    }
+    if (!buildingId || !db.prepare('SELECT id FROM maintenance_buildings WHERE id = ?').get(buildingId)) {
+        return res.status(400).json({ success: false, message: 'Gebäude fehlt' });
+    }
+    if (apartmentId && !db.prepare('SELECT id FROM maintenance_apartments WHERE id = ? AND building_id = ?').get(apartmentId, buildingId)) {
+        return res.status(400).json({ success: false, message: 'Apartment passt nicht zum Gebäude' });
+    }
+    if (!name) return res.status(400).json({ success: false, message: 'Name des Wartungsobjekts fehlt' });
+
+    const result = db.prepare(`
+        INSERT INTO maintenance_assets (template_id, building_id, apartment_id, name, location, serial_number, status, installed_on, notes, created_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+        templateId,
+        buildingId,
+        apartmentId,
+        name,
+        String(req.body?.location || '').trim(),
+        String(req.body?.serial_number || '').trim(),
+        String(req.body?.status || 'active').trim() || 'active',
+        normalizeMaintenanceDate(req.body?.installed_on),
+        String(req.body?.notes || '').trim(),
+        requester.id
+    );
+
+    res.json({ success: true, id: result.lastInsertRowid });
+});
+
+app.put('/api/maintenance/assets/:id', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    const templateId = Number(req.body?.template_id);
+    const buildingId = Number(req.body?.building_id);
+    const apartmentId = req.body?.apartment_id ? Number(req.body.apartment_id) : null;
+    const name = String(req.body?.name || '').trim();
+    if (!db.prepare('SELECT id FROM maintenance_assets WHERE id = ?').get(id)) {
+        return res.status(404).json({ success: false, message: 'Wartungsobjekt nicht gefunden' });
+    }
+    if (!templateId || !db.prepare('SELECT id FROM maintenance_asset_templates WHERE id = ?').get(templateId)) {
+        return res.status(400).json({ success: false, message: 'Stammdatensatz fehlt' });
+    }
+    if (!buildingId || !db.prepare('SELECT id FROM maintenance_buildings WHERE id = ?').get(buildingId)) {
+        return res.status(400).json({ success: false, message: 'Gebäude fehlt' });
+    }
+    if (apartmentId && !db.prepare('SELECT id FROM maintenance_apartments WHERE id = ? AND building_id = ?').get(apartmentId, buildingId)) {
+        return res.status(400).json({ success: false, message: 'Apartment passt nicht zum Gebäude' });
+    }
+    if (!name) return res.status(400).json({ success: false, message: 'Name des Wartungsobjekts fehlt' });
+
+    db.prepare(`
+        UPDATE maintenance_assets
+        SET template_id = ?, building_id = ?, apartment_id = ?, name = ?, location = ?, serial_number = ?, status = ?, installed_on = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(
+        templateId,
+        buildingId,
+        apartmentId,
+        name,
+        String(req.body?.location || '').trim(),
+        String(req.body?.serial_number || '').trim(),
+        String(req.body?.status || 'active').trim() || 'active',
+        normalizeMaintenanceDate(req.body?.installed_on),
+        String(req.body?.notes || '').trim(),
+        id
+    );
+
+    res.json({ success: true });
+});
+
+app.delete('/api/maintenance/assets/:id', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    const planCount = Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_plans WHERE asset_id = ?').get(id) || {}).count || 0);
+    if (planCount) {
+        return res.status(400).json({ success: false, message: 'Wartungsobjekt hat noch Wartungspläne' });
+    }
+    db.prepare('DELETE FROM maintenance_assets WHERE id = ?').run(id);
+    res.json({ success: true });
+});
+
+app.post('/api/maintenance/plans', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const assetId = Number(req.body?.asset_id);
+    const title = String(req.body?.title || '').trim();
+    const intervalDays = Math.max(1, Number(req.body?.interval_days || 180));
+    const nextDueDate = normalizeMaintenanceDate(req.body?.next_due_date) || addDaysIso(new Date().toISOString().slice(0, 10), intervalDays);
+    if (!assetId || !db.prepare('SELECT id FROM maintenance_assets WHERE id = ?').get(assetId)) {
+        return res.status(400).json({ success: false, message: 'Wartungsobjekt fehlt' });
+    }
+    if (!title) return res.status(400).json({ success: false, message: 'Titel fehlt' });
+
+    const result = db.prepare(`
+        INSERT INTO maintenance_plans (asset_id, title, interval_days, next_due_date, last_completed_at, responsible, priority, instructions, active, created_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+        assetId,
+        title,
+        intervalDays,
+        nextDueDate,
+        normalizeMaintenanceDate(req.body?.last_completed_at),
+        String(req.body?.responsible || '').trim(),
+        String(req.body?.priority || 'normal').trim() || 'normal',
+        String(req.body?.instructions || '').trim(),
+        req.body?.active === false ? 0 : 1,
+        requester.id
+    );
+
+    res.json({ success: true, id: result.lastInsertRowid });
+});
+
+app.put('/api/maintenance/plans/:id', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    const assetId = Number(req.body?.asset_id);
+    const title = String(req.body?.title || '').trim();
+    const intervalDays = Math.max(1, Number(req.body?.interval_days || 180));
+    if (!db.prepare('SELECT id FROM maintenance_plans WHERE id = ?').get(id)) {
+        return res.status(404).json({ success: false, message: 'Wartungsplan nicht gefunden' });
+    }
+    if (!assetId || !db.prepare('SELECT id FROM maintenance_assets WHERE id = ?').get(assetId)) {
+        return res.status(400).json({ success: false, message: 'Wartungsobjekt fehlt' });
+    }
+    if (!title) return res.status(400).json({ success: false, message: 'Titel fehlt' });
+
+    db.prepare(`
+        UPDATE maintenance_plans
+        SET asset_id = ?, title = ?, interval_days = ?, next_due_date = ?, last_completed_at = ?, responsible = ?, priority = ?, instructions = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(
+        assetId,
+        title,
+        intervalDays,
+        normalizeMaintenanceDate(req.body?.next_due_date),
+        normalizeMaintenanceDate(req.body?.last_completed_at),
+        String(req.body?.responsible || '').trim(),
+        String(req.body?.priority || 'normal').trim() || 'normal',
+        String(req.body?.instructions || '').trim(),
+        req.body?.active === false ? 0 : 1,
+        id
+    );
+
+    res.json({ success: true });
+});
+
+app.post('/api/maintenance/plans/:id/complete', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    const plan = db.prepare('SELECT id, interval_days FROM maintenance_plans WHERE id = ?').get(id);
+    if (!plan) return res.status(404).json({ success: false, message: 'Wartungsplan nicht gefunden' });
+
+    const completedAt = normalizeMaintenanceDate(req.body?.completed_at) || new Date().toISOString().slice(0, 10);
+    const nextDueDate = addDaysIso(completedAt, Number(plan.interval_days || 0));
+    db.prepare(`
+        UPDATE maintenance_plans
+        SET last_completed_at = ?, next_due_date = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(completedAt, nextDueDate, id);
+
+    res.json({ success: true, completed_at: completedAt, next_due_date: nextDueDate });
+});
+
+app.delete('/api/maintenance/plans/:id', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    db.prepare('DELETE FROM maintenance_plans WHERE id = ?').run(Number(req.params.id));
+    res.json({ success: true });
+});
+
 function getActiveSessionsForUser(userId) {
     const socketIds = [...(userSockets.get(Number(userId)) || [])];
     return socketIds.map((socketId) => {
@@ -2012,7 +2733,7 @@ function getActiveSessionsForUser(userId) {
 // Admin: Get all users
 app.get('/api/admin/users', (req, res) => {
     // Ideally verify requester via session/token. For now open internally.
-    const users = db.prepare('SELECT id, uin, username, role, avatar, status, can_chat FROM users').all()
+    const users = db.prepare('SELECT id, uin, username, display_name, role, avatar, status, can_chat, can_access_maintenance_board FROM users').all()
         .map((user) => {
             const activeSessions = getActiveSessionsForUser(user.id);
             return {
@@ -2069,6 +2790,24 @@ app.put('/api/admin/users/:id/toggle-chat', (req, res) => {
     } catch (e) {
         console.error(e);
         res.status(500).json({ success: false });
+    }
+});
+
+app.put('/api/admin/users/:id/toggle-maintenance-board', (req, res) => {
+    const { id } = req.params;
+    const { can_access_maintenance_board, requesterId } = req.body;
+
+    const requester = db.prepare('SELECT role FROM users WHERE id = ?').get(requesterId);
+    if (!requester || requester.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Keine Berechtigung' });
+    }
+
+    try {
+        db.prepare('UPDATE users SET can_access_maintenance_board = ? WHERE id = ?').run(can_access_maintenance_board ? 1 : 0, id);
+        res.json({ success: true });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ success: false, message: 'Toggle failed' });
     }
 });
 

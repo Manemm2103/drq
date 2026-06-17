@@ -44,7 +44,8 @@
                 
                 <!-- Admin Button -->
                 <button id="enable-push-btn" onclick="requestPushPermission()" class="icon-btn" title="Push aktivieren" style="display:inline-block;">🔔</button>
-                        <button id="admin-btn" onclick="openAdmin()" class="icon-btn" style="margin-left: 10px; font-size: 1.5rem; display:none;" title="Admin Panel">⚙️</button>
+                <button id="maintenance-btn" onclick="openMaintenanceBoard()" class="icon-btn" style="margin-left: 10px; display:none;" title="DR-MAINTENANCE BOARD">🧰</button>
+                <button id="admin-btn" onclick="openAdmin()" class="icon-btn" style="margin-left: 10px; font-size: 1.5rem; display:none;" title="Admin Panel">⚙️</button>
                 <button onclick="logout()" class="icon-btn logout-btn" title="Abmelden">🚪</button>
             </div>
             <div class="search-bar">
@@ -53,7 +54,7 @@
             <div class="contact-list" id="contact-list">
                 <!-- Contacts -->
             </div>
-            <div class="build-version sidebar-footer-version" id="build-version-sidebar">Version 1.1.6</div>
+            <div class="build-version sidebar-footer-version" id="build-version-sidebar">Version 1.2.0</div>
         </div>
 
         <div class="chat-area" id="chat-area">
@@ -298,6 +299,6 @@
     <audio id="sound-msg" src="message.mp3"></audio>
     <audio id="sound-ring" src="ringtone.mp3" loop></audio>
 
-    <script src="app.js?v=66"></script>
+    <script src="app.js?v=67"></script>
 </body>
 </html>
