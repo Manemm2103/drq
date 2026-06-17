@@ -21,7 +21,7 @@ const replyContent = document.getElementById('reply-preview-content');
 let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
-let runtimeVersionLabel = 'Version 1.3.2';
+let runtimeVersionLabel = 'Version 1.3.3';
 let currentChatMessages = [];
 let activeSearchTab = 'text';
 let contactStateCache = {
@@ -249,6 +249,7 @@ function openProfile() {
     document.getElementById('edit-uin').value = currentUser.uin || "---";
     document.getElementById('edit-username').value = currentUser.username;
     document.getElementById('edit-display-name').value = currentUser.display_name || '';
+    document.getElementById('edit-email').value = currentUser.email || '';
     document.getElementById('edit-password').value = ""; // Don't show old pass
     document.getElementById('edit-status').value = currentUser.custom_status || ""; // Load Status
     document.getElementById('edit-theme').value = currentUser.theme_key || 'graphite';
@@ -660,6 +661,7 @@ function selectBackground(bg) {
 async function saveProfile() {
     const newUsername = document.getElementById('edit-username').value;
     const newDisplayName = document.getElementById('edit-display-name').value;
+    const newEmail = document.getElementById('edit-email').value;
     const newPassword = document.getElementById('edit-password').value;
     const newStatus = document.getElementById('edit-status').value;
     const newTheme = document.getElementById('edit-theme').value;
@@ -689,6 +691,7 @@ async function saveProfile() {
         const payload = {
             username: newUsername,
             display_name: newDisplayName,
+            email: String(newEmail || '').trim(),
             avatar: avatarFilename,
             chat_bg: bgValue,
             custom_status: newStatus,

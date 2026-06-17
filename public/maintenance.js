@@ -164,8 +164,7 @@ function renderSummary() {
             <td>${renderPriority(plan.priority)}</td>
             <td>
                 <div class="table-actions">
-                    <button class="mini-btn success" onclick="completePlan(${plan.id})">Erledigt</button>
-                    <button class="mini-btn" onclick="editPlan(${plan.id})">Bearbeiten</button>
+                    <button class="mini-btn" onclick="editPlan(${plan.id})">Öffnen</button>
                 </div>
             </td>
         </tr>
@@ -296,8 +295,7 @@ function renderPlans() {
             <td>${renderPriority(plan.priority)}</td>
             <td>
                 <div class="table-actions">
-                    <button class="mini-btn success" onclick="completePlan(${plan.id})">Erledigt</button>
-                    <button class="mini-btn" onclick="editPlan(${plan.id})">Bearbeiten</button>
+                    <button class="mini-btn" onclick="editPlan(${plan.id})">Öffnen</button>
                     <button class="mini-btn danger" onclick="deletePlan(${plan.id})">Löschen</button>
                 </div>
             </td>
@@ -430,6 +428,7 @@ async function submitPlanForm(event) {
         interval_days: Number(document.getElementById('plan-interval-days').value || 180),
         next_due_date: document.getElementById('plan-next-due-date').value,
         last_completed_at: document.getElementById('plan-last-completed-at').value,
+        last_completion_note: document.getElementById('plan-completion-note').value.trim(),
         responsible: document.getElementById('plan-responsible').value.trim(),
         priority: document.getElementById('plan-priority').value,
         instructions: document.getElementById('plan-instructions').value.trim(),
@@ -512,6 +511,7 @@ function resetPlanForm() {
     document.getElementById('plan-interval-days').value = 180;
     document.getElementById('plan-priority').value = 'normal';
     document.getElementById('plan-active').checked = true;
+    document.getElementById('plan-complete-btn').style.display = 'none';
 }
 
 function resetCalendarQuickForm() {
@@ -587,10 +587,12 @@ function editPlan(id) {
     document.getElementById('plan-interval-days').value = plan.interval_days || 180;
     document.getElementById('plan-next-due-date').value = plan.next_due_date || '';
     document.getElementById('plan-last-completed-at').value = plan.last_completed_at || '';
+    document.getElementById('plan-completion-note').value = plan.last_completion_note || '';
     document.getElementById('plan-responsible').value = plan.responsible || '';
     document.getElementById('plan-priority').value = plan.priority || 'normal';
     document.getElementById('plan-instructions').value = plan.instructions || '';
     document.getElementById('plan-active').checked = !!plan.active;
+    document.getElementById('plan-complete-btn').style.display = 'inline-flex';
 }
 
 async function deleteBuilding(id) {
@@ -855,6 +857,28 @@ async function completePlan(id) {
         });
         showAlert('Wartung als erledigt markiert.', 'success');
         await reloadBoardData();
+    } catch (error) {
+        showAlert(error.message || 'Plan konnte nicht abgeschlossen werden.', 'error');
+    }
+}
+
+async function completeOpenedPlan() {
+    const id = Number(document.getElementById('plan-id').value || 0);
+    if (!id) {
+        showAlert('Bitte zuerst einen Wartungsplan öffnen.', 'error');
+        return;
+    }
+    try {
+        await api(`/api/maintenance/plans/${id}/complete`, {
+            method: 'POST',
+            body: {
+                requesterId: appState.currentUser.id,
+                completion_note: document.getElementById('plan-completion-note').value.trim()
+            }
+        });
+        showAlert('Wartung als erledigt markiert.', 'success');
+        await reloadBoardData();
+        editPlan(id);
     } catch (error) {
         showAlert(error.message || 'Plan konnte nicht abgeschlossen werden.', 'error');
     }

@@ -791,6 +791,7 @@ db.exec(`
         interval_days INTEGER DEFAULT 180,
         next_due_date TEXT DEFAULT '',
         last_completed_at TEXT DEFAULT '',
+        last_completion_note TEXT DEFAULT '',
         responsible TEXT DEFAULT '',
         priority TEXT DEFAULT 'normal',
         instructions TEXT DEFAULT '',
@@ -845,6 +846,11 @@ try {
     if (!userCols.some(c => c.name === 'owner_user_id')) {
         db.prepare("ALTER TABLE users ADD COLUMN owner_user_id INTEGER").run();
         console.log("Migration: Added owner_user_id to users");
+    }
+    const maintenancePlanCols = db.prepare("PRAGMA table_info(maintenance_plans)").all();
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'last_completion_note')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN last_completion_note TEXT DEFAULT ''").run();
+        console.log("Migration: Added last_completion_note to maintenance_plans");
     }
     
     const msgCols = db.prepare("PRAGMA table_info(messages)").all();
@@ -957,6 +963,7 @@ try {
             interval_days INTEGER DEFAULT 180,
             next_due_date TEXT DEFAULT '',
             last_completed_at TEXT DEFAULT '',
+            last_completion_note TEXT DEFAULT '',
             responsible TEXT DEFAULT '',
             priority TEXT DEFAULT 'normal',
             instructions TEXT DEFAULT '',
@@ -1716,7 +1723,7 @@ app.post('/api/login', (req, res) => {
 // Update Profile (Self)
 app.put('/api/profile/:id', (req, res) => {
     const { id } = req.params;
-    const { username, display_name, password, avatar, chat_bg, custom_status, public_key, theme_key } = req.body;
+    const { username, display_name, email, password, avatar, chat_bg, custom_status, public_key, theme_key } = req.body;
     
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     if (!user) return res.status(404).json({ success: false, message: 'User nicht gefunden' });
@@ -1729,6 +1736,9 @@ app.put('/api/profile/:id', (req, res) => {
         }
         if (display_name !== undefined) {
             db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(String(display_name || '').trim(), id);
+        }
+        if (email !== undefined) {
+            db.prepare('UPDATE users SET email = ? WHERE id = ?').run(String(email || '').trim(), id);
         }
         if (password) {
             const hash = bcrypt.hashSync(password, 10);
@@ -3019,14 +3029,15 @@ app.post('/api/maintenance/plans', (req, res) => {
     if (!title) return res.status(400).json({ success: false, message: 'Titel fehlt' });
 
     const result = db.prepare(`
-        INSERT INTO maintenance_plans (asset_id, title, interval_days, next_due_date, last_completed_at, responsible, priority, instructions, active, created_by, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO maintenance_plans (asset_id, title, interval_days, next_due_date, last_completed_at, last_completion_note, responsible, priority, instructions, active, created_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `).run(
         assetId,
         title,
         intervalDays,
         nextDueDate,
         normalizeMaintenanceDate(req.body?.last_completed_at),
+        String(req.body?.last_completion_note || '').trim(),
         String(req.body?.responsible || '').trim(),
         String(req.body?.priority || 'normal').trim() || 'normal',
         String(req.body?.instructions || '').trim(),
@@ -3055,7 +3066,7 @@ app.put('/api/maintenance/plans/:id', (req, res) => {
 
     db.prepare(`
         UPDATE maintenance_plans
-        SET asset_id = ?, title = ?, interval_days = ?, next_due_date = ?, last_completed_at = ?, responsible = ?, priority = ?, instructions = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+        SET asset_id = ?, title = ?, interval_days = ?, next_due_date = ?, last_completed_at = ?, last_completion_note = ?, responsible = ?, priority = ?, instructions = ?, active = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
     `).run(
         assetId,
@@ -3063,6 +3074,7 @@ app.put('/api/maintenance/plans/:id', (req, res) => {
         intervalDays,
         normalizeMaintenanceDate(req.body?.next_due_date),
         normalizeMaintenanceDate(req.body?.last_completed_at),
+        String(req.body?.last_completion_note || '').trim(),
         String(req.body?.responsible || '').trim(),
         String(req.body?.priority || 'normal').trim() || 'normal',
         String(req.body?.instructions || '').trim(),
@@ -3083,11 +3095,12 @@ app.post('/api/maintenance/plans/:id/complete', (req, res) => {
 
     const completedAt = normalizeMaintenanceDate(req.body?.completed_at) || new Date().toISOString().slice(0, 10);
     const nextDueDate = addDaysIso(completedAt, Number(plan.interval_days || 0));
+    const completionNote = String(req.body?.completion_note || '').trim();
     db.prepare(`
         UPDATE maintenance_plans
-        SET last_completed_at = ?, next_due_date = ?, updated_at = CURRENT_TIMESTAMP
+        SET last_completed_at = ?, last_completion_note = ?, next_due_date = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-    `).run(completedAt, nextDueDate, id);
+    `).run(completedAt, completionNote, nextDueDate, id);
 
     res.json({ success: true, completed_at: completedAt, next_due_date: nextDueDate });
 });
