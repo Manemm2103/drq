@@ -7,6 +7,7 @@ const appState = {
     templates: [],
     assets: [],
     plans: [],
+    openedPlanId: null,
     calendarView: 'month',
     calendarDate: new Date(),
     selectedDate: new Date().toISOString().slice(0, 10)
@@ -59,6 +60,8 @@ function bindForms() {
     document.getElementById('plan-form').addEventListener('submit', submitPlanForm);
     document.getElementById('calendar-quick-form').addEventListener('submit', submitCalendarQuickForm);
     document.getElementById('asset-building').addEventListener('change', syncApartmentOptions);
+    document.getElementById('asset-template').addEventListener('change', hydrateAssetFromTemplate);
+    document.getElementById('plan-asset').addEventListener('change', hydratePlanFromAsset);
     document.getElementById('calendar-plan-asset').addEventListener('change', hydrateCalendarTitleFromAsset);
 }
 
@@ -120,6 +123,8 @@ function renderBoard() {
     fillAssetSelect();
     fillCalendarAssetSelect();
     syncApartmentOptions();
+    renderPlanFocusState();
+    renderTemplateFileList();
 }
 
 function handleMaintenanceLinkTarget() {
@@ -303,6 +308,62 @@ function renderPlans() {
     `).join('');
 }
 
+function renderPlanFocusState() {
+    const listSurface = document.getElementById('plans-list-surface');
+    const closeBtn = document.getElementById('plan-close-btn');
+    const docsPanel = document.getElementById('plan-linked-docs');
+    const openedPlan = appState.plans.find((item) => Number(item.id) === Number(appState.openedPlanId));
+
+    if (listSurface) listSurface.hidden = !!openedPlan;
+    if (closeBtn) closeBtn.style.display = openedPlan ? 'inline-flex' : 'none';
+
+    if (!docsPanel) return;
+    if (!openedPlan) {
+        docsPanel.hidden = true;
+        docsPanel.innerHTML = '';
+        return;
+    }
+
+    const files = openedPlan.template_files || [];
+    const checklist = String(openedPlan.template_checklist || '').trim();
+    const description = String(openedPlan.template_description || '').trim();
+
+    docsPanel.hidden = false;
+    docsPanel.innerHTML = `
+        <div class="surface-header">
+            <h3>Geräteunterlagen</h3>
+            <span>${escapeHtml(openedPlan.template_name || openedPlan.asset_name || 'Wartungsobjekt')}</span>
+        </div>
+        ${description ? `<div class="muted-copy">${escapeHtml(description)}</div>` : ''}
+        ${checklist ? `<div class="muted-copy">${escapeHtml(checklist).replace(/\n/g, '<br>')}</div>` : ''}
+        ${
+            files.length
+                ? files.map((file) => renderLinkedDocItem(file)).join('')
+                : '<div class="muted-copy">Für dieses Gerät sind noch keine Bilder oder Anleitungen hinterlegt.</div>'
+        }
+    `;
+}
+
+function renderLinkedDocItem(file) {
+    const mime = String(file.mime_type || '').toLowerCase();
+    const isImage = mime.startsWith('image/');
+    const preview = isImage
+        ? `<img class="linked-doc-thumb" src="${escapeHtml(file.url)}" alt="${escapeHtml(file.original_name)}">`
+        : `<div class="linked-doc-thumb" style="display:flex;align-items:center;justify-content:center;font-size:0.75rem;">DOC</div>`;
+    return `
+        <div class="linked-doc-item">
+            <div class="linked-doc-item-preview">
+                ${preview}
+                <div class="linked-doc-meta">
+                    <strong>${escapeHtml(file.original_name)}</strong>
+                    <span>${escapeHtml(file.mime_type || 'Datei')}</span>
+                </div>
+            </div>
+            <a class="action-btn secondary" href="${escapeHtml(file.url)}" target="_blank" rel="noopener noreferrer">Öffnen</a>
+        </div>
+    `;
+}
+
 function fillBuildingSelects() {
     const options = ['<option value="">Bitte wählen</option>']
         .concat(appState.buildings.map((building) => `<option value="${building.id}">${escapeHtml(building.name)}</option>`))
@@ -347,6 +408,15 @@ function syncApartmentOptions() {
     select.innerHTML = options;
     if ([...select.options].some((option) => option.value === currentValue)) {
         select.value = currentValue;
+    }
+}
+
+function hydrateAssetFromTemplate() {
+    const templateId = Number(document.getElementById('asset-template').value || 0);
+    const template = appState.templates.find((item) => Number(item.id) === templateId);
+    const nameInput = document.getElementById('asset-name');
+    if (template && !nameInput.value.trim()) {
+        nameInput.value = template.name || '';
     }
 }
 
@@ -493,6 +563,8 @@ function resetTemplateForm() {
     document.getElementById('template-id').value = '';
     document.getElementById('template-default-interval').value = 180;
     document.getElementById('template-active').checked = true;
+    document.getElementById('template-file-list').innerHTML = '';
+    document.getElementById('template-file-upload').value = '';
 }
 
 function resetAssetForm() {
@@ -507,11 +579,13 @@ function resetAssetForm() {
 function resetPlanForm() {
     document.getElementById('plan-form').reset();
     document.getElementById('plan-id').value = '';
+    appState.openedPlanId = null;
     fillAssetSelect();
     document.getElementById('plan-interval-days').value = 180;
     document.getElementById('plan-priority').value = 'normal';
     document.getElementById('plan-active').checked = true;
     document.getElementById('plan-complete-btn').style.display = 'none';
+    renderPlanFocusState();
 }
 
 function resetCalendarQuickForm() {
@@ -558,6 +632,7 @@ function editTemplate(id) {
     document.getElementById('template-description').value = template.description || '';
     document.getElementById('template-checklist').value = template.checklist || '';
     document.getElementById('template-active').checked = !!template.active;
+    renderTemplateFileList();
 }
 
 function editAsset(id) {
@@ -580,6 +655,7 @@ function editAsset(id) {
 function editPlan(id) {
     const plan = appState.plans.find((item) => Number(item.id) === Number(id));
     if (!plan) return;
+    appState.openedPlanId = Number(id);
     setActiveTab('plans');
     document.getElementById('plan-id').value = plan.id;
     document.getElementById('plan-asset').value = plan.asset_id || '';
@@ -593,6 +669,11 @@ function editPlan(id) {
     document.getElementById('plan-instructions').value = plan.instructions || '';
     document.getElementById('plan-active').checked = !!plan.active;
     document.getElementById('plan-complete-btn').style.display = 'inline-flex';
+    renderPlanFocusState();
+}
+
+function closeOpenedPlan() {
+    resetPlanForm();
 }
 
 async function deleteBuilding(id) {
@@ -709,6 +790,29 @@ function hydrateCalendarTitleFromAsset() {
     const titleInput = document.getElementById('calendar-plan-title');
     if (!asset || titleInput.value.trim()) return;
     titleInput.value = `${asset.name} Wartung`;
+    const template = appState.templates.find((item) => Number(item.id) === Number(asset.template_id));
+    if (template && Number(document.getElementById('calendar-plan-interval-days').value || 0) === 180) {
+        document.getElementById('calendar-plan-interval-days').value = template.default_interval_days || 180;
+    }
+}
+
+function hydratePlanFromAsset() {
+    const assetId = Number(document.getElementById('plan-asset').value || 0);
+    const asset = appState.assets.find((item) => Number(item.id) === assetId);
+    if (!asset) return;
+    const titleInput = document.getElementById('plan-title');
+    const instructionsInput = document.getElementById('plan-instructions');
+    const intervalInput = document.getElementById('plan-interval-days');
+
+    if (!titleInput.value.trim()) {
+        titleInput.value = `${asset.name} Wartung`;
+    }
+    if (!instructionsInput.value.trim()) {
+        instructionsInput.value = asset.template_checklist || asset.template_description || '';
+    }
+    if (!Number(intervalInput.value || 0) || Number(intervalInput.value || 0) === 180) {
+        intervalInput.value = asset.template_default_interval_days || 180;
+    }
 }
 
 function getSelectedDate() {
@@ -881,6 +985,81 @@ async function completeOpenedPlan() {
         editPlan(id);
     } catch (error) {
         showAlert(error.message || 'Plan konnte nicht abgeschlossen werden.', 'error');
+    }
+}
+
+function renderTemplateFileList() {
+    const list = document.getElementById('template-file-list');
+    if (!list) return;
+    const templateId = Number(document.getElementById('template-id').value || 0);
+    const template = appState.templates.find((item) => Number(item.id) === templateId);
+    const files = template?.files || [];
+    if (!templateId) {
+        list.innerHTML = '<div class="muted-copy">Bitte zuerst Stammdaten speichern oder einen vorhandenen Datensatz öffnen.</div>';
+        return;
+    }
+    if (!files.length) {
+        list.innerHTML = '<div class="muted-copy">Noch keine Dateien hinterlegt.</div>';
+        return;
+    }
+    list.innerHTML = files.map((file) => `
+        <div class="template-file-item">
+            <div>
+                <strong>${escapeHtml(file.original_name)}</strong>
+                <span>${escapeHtml(file.mime_type || 'Datei')}</span>
+            </div>
+            <div class="table-actions">
+                <a class="mini-btn" href="${escapeHtml(file.url)}" target="_blank" rel="noopener noreferrer">Öffnen</a>
+                <button class="mini-btn danger" type="button" onclick="deleteTemplateFile(${templateId}, ${file.id})">Löschen</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function uploadTemplateFiles() {
+    const templateId = Number(document.getElementById('template-id').value || 0);
+    const input = document.getElementById('template-file-upload');
+    const files = Array.from(input.files || []);
+    if (!templateId) {
+        showAlert('Bitte zuerst den Stammdatensatz speichern.', 'error');
+        return;
+    }
+    if (!files.length) {
+        showAlert('Bitte mindestens eine Datei auswählen.', 'error');
+        return;
+    }
+    try {
+        for (const file of files) {
+            const formData = new FormData();
+            formData.append('file', file);
+            await fetch(`/api/maintenance/templates/${templateId}/files?requesterId=${encodeURIComponent(appState.currentUser.id)}`, {
+                method: 'POST',
+                body: formData
+            });
+        }
+        input.value = '';
+        showAlert('Dateien hochgeladen.', 'success');
+        await reloadBoardData();
+        document.getElementById('template-id').value = String(templateId);
+        renderTemplateFileList();
+    } catch (error) {
+        showAlert('Dateien konnten nicht hochgeladen werden.', 'error');
+    }
+}
+
+async function deleteTemplateFile(templateId, fileId) {
+    try {
+        await api(`/api/maintenance/templates/${templateId}/files/${fileId}`, {
+            method: 'DELETE',
+            body: { requesterId: appState.currentUser.id }
+        });
+        showAlert('Datei entfernt.', 'success');
+        await reloadBoardData();
+        document.getElementById('template-id').value = String(templateId);
+        renderTemplateFileList();
+        renderPlanFocusState();
+    } catch (error) {
+        showAlert(error.message || 'Datei konnte nicht gelöscht werden.', 'error');
     }
 }
 

@@ -295,6 +295,7 @@ textarea {
 .form-actions {
     display: flex;
     gap: 10px;
+    flex-wrap: wrap;
 }
 
 .action-btn {
@@ -311,6 +312,51 @@ textarea {
 
 .table-wrap {
     overflow: auto;
+}
+
+.template-file-list,
+.linked-docs-panel {
+    display: grid;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.template-file-item,
+.linked-doc-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface-strong);
+}
+
+.linked-doc-item-preview {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.linked-doc-thumb {
+    width: 52px;
+    height: 52px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: #fff;
+}
+
+.linked-doc-meta strong,
+.template-file-item strong {
+    display: block;
+}
+
+.linked-doc-meta span,
+.template-file-item span {
+    color: var(--muted);
+    font-size: 0.86rem;
 }
 
 table {

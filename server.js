@@ -766,6 +766,15 @@ db.exec(`
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS maintenance_template_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_id INTEGER NOT NULL,
+        original_name TEXT NOT NULL,
+        stored_name TEXT NOT NULL,
+        mime_type TEXT DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(template_id) REFERENCES maintenance_asset_templates(id)
+    );
     CREATE TABLE IF NOT EXISTS maintenance_assets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         template_id INTEGER NOT NULL,
@@ -940,6 +949,14 @@ try {
             created_by INTEGER,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_template_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            template_id INTEGER NOT NULL,
+            original_name TEXT NOT NULL,
+            stored_name TEXT NOT NULL,
+            mime_type TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS maintenance_assets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2318,7 +2335,7 @@ function listMaintenanceApartments() {
 }
 
 function listMaintenanceTemplates() {
-    return db.prepare(`
+    const templates = db.prepare(`
         SELECT
             t.*,
             COUNT(ma.id) AS asset_count
@@ -2332,14 +2349,38 @@ function listMaintenanceTemplates() {
         default_interval_days: Number(row.default_interval_days || 0),
         asset_count: Number(row.asset_count || 0)
     }));
+    const fileRows = db.prepare(`
+        SELECT id, template_id, original_name, stored_name, mime_type
+        FROM maintenance_template_files
+        ORDER BY created_at DESC, id DESC
+    `).all();
+    const fileMap = new Map();
+    fileRows.forEach((file) => {
+        const key = Number(file.template_id);
+        if (!fileMap.has(key)) fileMap.set(key, []);
+        fileMap.get(key).push({
+            id: file.id,
+            original_name: file.original_name,
+            stored_name: file.stored_name,
+            mime_type: file.mime_type || '',
+            url: `/uploads/${file.stored_name}`
+        });
+    });
+    return templates.map((template) => ({
+        ...template,
+        files: fileMap.get(Number(template.id)) || []
+    }));
 }
 
 function listMaintenanceAssets() {
-    return db.prepare(`
+    const assets = db.prepare(`
         SELECT
             ma.*,
             t.name AS template_name,
             t.category AS template_category,
+            t.description AS template_description,
+            t.checklist AS template_checklist,
+            t.default_interval_days AS template_default_interval_days,
             b.name AS building_name,
             a.name AS apartment_name,
             COUNT(mp.id) AS plan_count
@@ -2354,16 +2395,47 @@ function listMaintenanceAssets() {
         ...row,
         plan_count: Number(row.plan_count || 0)
     }));
+    const templateIds = [...new Set(assets.map((asset) => Number(asset.template_id)).filter(Boolean))];
+    const fileMap = new Map();
+    if (templateIds.length) {
+        const placeholders = templateIds.map(() => '?').join(', ');
+        const fileRows = db.prepare(`
+            SELECT id, template_id, original_name, stored_name, mime_type
+            FROM maintenance_template_files
+            WHERE template_id IN (${placeholders})
+            ORDER BY created_at DESC, id DESC
+        `).all(...templateIds);
+        fileRows.forEach((file) => {
+            const key = Number(file.template_id);
+            if (!fileMap.has(key)) fileMap.set(key, []);
+            fileMap.get(key).push({
+                id: file.id,
+                original_name: file.original_name,
+                stored_name: file.stored_name,
+                mime_type: file.mime_type || '',
+                url: `/uploads/${file.stored_name}`
+            });
+        });
+    }
+    return assets.map((asset) => ({
+        ...asset,
+        template_files: fileMap.get(Number(asset.template_id)) || [],
+        template_default_interval_days: Number(asset.template_default_interval_days || 0)
+    }));
 }
 
 function listMaintenancePlans() {
-    return db.prepare(`
+    const plans = db.prepare(`
         SELECT
             mp.*,
             ma.name AS asset_name,
+            ma.template_id AS template_id,
             b.name AS building_name,
             a.name AS apartment_name,
-            t.name AS template_name
+            t.name AS template_name,
+            t.description AS template_description,
+            t.checklist AS template_checklist,
+            t.default_interval_days AS template_default_interval_days
         FROM maintenance_plans mp
         JOIN maintenance_assets ma ON ma.id = mp.asset_id
         JOIN maintenance_buildings b ON b.id = ma.building_id
@@ -2377,6 +2449,33 @@ function listMaintenancePlans() {
         ...row,
         active: Number(row.active || 0) === 1,
         interval_days: Number(row.interval_days || 0)
+    }));
+    const templateIds = [...new Set(plans.map((plan) => Number(plan.template_id)).filter(Boolean))];
+    const fileMap = new Map();
+    if (templateIds.length) {
+        const placeholders = templateIds.map(() => '?').join(', ');
+        const fileRows = db.prepare(`
+            SELECT id, template_id, original_name, stored_name, mime_type
+            FROM maintenance_template_files
+            WHERE template_id IN (${placeholders})
+            ORDER BY created_at DESC, id DESC
+        `).all(...templateIds);
+        fileRows.forEach((file) => {
+            const key = Number(file.template_id);
+            if (!fileMap.has(key)) fileMap.set(key, []);
+            fileMap.get(key).push({
+                id: file.id,
+                original_name: file.original_name,
+                stored_name: file.stored_name,
+                mime_type: file.mime_type || '',
+                url: `/uploads/${file.stored_name}`
+            });
+        });
+    }
+    return plans.map((plan) => ({
+        ...plan,
+        template_files: fileMap.get(Number(plan.template_id)) || [],
+        template_default_interval_days: Number(plan.template_default_interval_days || 0)
     }));
 }
 
@@ -2905,6 +3004,50 @@ app.put('/api/maintenance/templates/:id', (req, res) => {
         id
     );
 
+    res.json({ success: true });
+});
+
+app.post('/api/maintenance/templates/:id/files', upload.single('file'), (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+    const templateId = Number(req.params.id);
+    if (!db.prepare('SELECT id FROM maintenance_asset_templates WHERE id = ?').get(templateId)) {
+        return res.status(404).json({ success: false, message: 'Stammdatensatz nicht gefunden' });
+    }
+    if (!req.file) {
+        return res.status(400).json({ success: false, message: 'Keine Datei hochgeladen' });
+    }
+    const result = db.prepare(`
+        INSERT INTO maintenance_template_files (template_id, original_name, stored_name, mime_type)
+        VALUES (?, ?, ?, ?)
+    `).run(
+        templateId,
+        req.file.originalname,
+        req.file.filename,
+        req.file.mimetype || ''
+    );
+    res.json({
+        success: true,
+        file: {
+            id: result.lastInsertRowid,
+            original_name: req.file.originalname,
+            stored_name: req.file.filename,
+            mime_type: req.file.mimetype || '',
+            url: `/uploads/${req.file.filename}`
+        }
+    });
+});
+
+app.delete('/api/maintenance/templates/:templateId/files/:fileId', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+    const templateId = Number(req.params.templateId);
+    const fileId = Number(req.params.fileId);
+    const file = db.prepare('SELECT id, stored_name FROM maintenance_template_files WHERE id = ? AND template_id = ?').get(fileId, templateId);
+    if (!file) {
+        return res.status(404).json({ success: false, message: 'Datei nicht gefunden' });
+    }
+    db.prepare('DELETE FROM maintenance_template_files WHERE id = ?').run(fileId);
     res.json({ success: true });
 });
 
