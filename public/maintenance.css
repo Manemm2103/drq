@@ -324,6 +324,14 @@ textarea {
     overflow: auto;
 }
 
+.clickable-row {
+    cursor: pointer;
+}
+
+.clickable-row:hover td {
+    background: #f8fafc;
+}
+
 .template-file-list,
 .linked-docs-panel {
     display: grid;

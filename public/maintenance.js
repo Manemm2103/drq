@@ -158,7 +158,7 @@ function renderSummary() {
     }
 
     body.innerHTML = topPlans.map((plan) => `
-        <tr>
+        <tr class="clickable-row" onclick="editPlan(${plan.id})">
             <td>
                 <strong>${escapeHtml(plan.title)}</strong>
                 <div class="muted-copy">${escapeHtml(plan.template_name || '')}</div>
@@ -169,7 +169,7 @@ function renderSummary() {
             <td>${renderPriority(plan.priority)}</td>
             <td>
                 <div class="table-actions">
-                    <button class="mini-btn" onclick="editPlan(${plan.id})">Öffnen</button>
+                    <button class="mini-btn" onclick="event.stopPropagation(); editPlan(${plan.id})">Öffnen</button>
                 </div>
             </td>
         </tr>
@@ -183,7 +183,7 @@ function renderBuildings() {
         return;
     }
     body.innerHTML = appState.buildings.map((building) => `
-        <tr>
+        <tr class="clickable-row" onclick="editBuilding(${building.id})">
             <td><strong>${escapeHtml(building.name)}</strong></td>
             <td>${escapeHtml(building.code || '-')}</td>
             <td>${escapeHtml(building.city || '-')}</td>
@@ -191,8 +191,8 @@ function renderBuildings() {
             <td>${building.asset_count || 0}</td>
             <td>
                 <div class="table-actions">
-                    <button class="mini-btn" onclick="editBuilding(${building.id})">Bearbeiten</button>
-                    <button class="mini-btn danger" onclick="deleteBuilding(${building.id})">Löschen</button>
+                    <button class="mini-btn" onclick="event.stopPropagation(); editBuilding(${building.id})">Bearbeiten</button>
+                    <button class="mini-btn danger" onclick="event.stopPropagation(); deleteBuilding(${building.id})">Löschen</button>
                 </div>
             </td>
         </tr>
@@ -206,7 +206,7 @@ function renderApartments() {
         return;
     }
     body.innerHTML = appState.apartments.map((apartment) => `
-        <tr>
+        <tr class="clickable-row" onclick="editApartment(${apartment.id})">
             <td>${escapeHtml(apartment.building_name || '-')}</td>
             <td><strong>${escapeHtml(apartment.name)}</strong><div class="muted-copy">${escapeHtml(apartment.unit_number || '')}</div></td>
             <td>${escapeHtml(apartment.floor || '-')}</td>
@@ -214,8 +214,8 @@ function renderApartments() {
             <td>${apartment.asset_count || 0}</td>
             <td>
                 <div class="table-actions">
-                    <button class="mini-btn" onclick="editApartment(${apartment.id})">Bearbeiten</button>
-                    <button class="mini-btn danger" onclick="deleteApartment(${apartment.id})">Löschen</button>
+                    <button class="mini-btn" onclick="event.stopPropagation(); editApartment(${apartment.id})">Bearbeiten</button>
+                    <button class="mini-btn danger" onclick="event.stopPropagation(); deleteApartment(${apartment.id})">Löschen</button>
                 </div>
             </td>
         </tr>
@@ -229,7 +229,7 @@ function renderTemplates() {
         return;
     }
     body.innerHTML = appState.templates.map((template) => `
-        <tr>
+        <tr class="clickable-row" onclick="editTemplate(${template.id})">
             <td><strong>${escapeHtml(template.name)}</strong></td>
             <td>${escapeHtml(template.category || '-')}</td>
             <td>${template.default_interval_days || 0} Tage</td>
@@ -237,8 +237,8 @@ function renderTemplates() {
             <td>${template.asset_count || 0}</td>
             <td>
                 <div class="table-actions">
-                    <button class="mini-btn" onclick="editTemplate(${template.id})">Bearbeiten</button>
-                    <button class="mini-btn danger" onclick="deleteTemplate(${template.id})">Löschen</button>
+                    <button class="mini-btn" onclick="event.stopPropagation(); editTemplate(${template.id})">Bearbeiten</button>
+                    <button class="mini-btn danger" onclick="event.stopPropagation(); deleteTemplate(${template.id})">Löschen</button>
                 </div>
             </td>
         </tr>
@@ -252,7 +252,7 @@ function renderAssets() {
         return;
     }
     body.innerHTML = appState.assets.map((asset) => `
-        <tr>
+        <tr class="clickable-row" onclick="editAsset(${asset.id})">
             <td><strong>${escapeHtml(asset.name)}</strong><div class="muted-copy">${escapeHtml(asset.location || '')}</div></td>
             <td>${escapeHtml(asset.template_name || '-')}</td>
             <td>${escapeHtml(asset.building_name || '-')}</td>
@@ -261,8 +261,8 @@ function renderAssets() {
             <td>${asset.plan_count || 0}</td>
             <td>
                 <div class="table-actions">
-                    <button class="mini-btn" onclick="editAsset(${asset.id})">Bearbeiten</button>
-                    <button class="mini-btn danger" onclick="deleteAsset(${asset.id})">Löschen</button>
+                    <button class="mini-btn" onclick="event.stopPropagation(); editAsset(${asset.id})">Bearbeiten</button>
+                    <button class="mini-btn danger" onclick="event.stopPropagation(); deleteAsset(${asset.id})">Löschen</button>
                 </div>
             </td>
         </tr>
@@ -291,7 +291,7 @@ function renderPlans() {
         return;
     }
     body.innerHTML = appState.plans.map((plan) => `
-        <tr>
+        <tr class="clickable-row" onclick="editPlan(${plan.id})">
             <td><strong>${escapeHtml(plan.title)}</strong></td>
             <td>${escapeHtml(plan.asset_name || '-')}</td>
             <td>${escapeHtml(plan.building_name || '-')}</td>
@@ -300,8 +300,8 @@ function renderPlans() {
             <td>${renderPriority(plan.priority)}</td>
             <td>
                 <div class="table-actions">
-                    <button class="mini-btn" onclick="editPlan(${plan.id})">Öffnen</button>
-                    <button class="mini-btn danger" onclick="deletePlan(${plan.id})">Löschen</button>
+                    <button class="mini-btn" onclick="event.stopPropagation(); editPlan(${plan.id})">Öffnen</button>
+                    <button class="mini-btn danger" onclick="event.stopPropagation(); deletePlan(${plan.id})">Löschen</button>
                 </div>
             </td>
         </tr>
