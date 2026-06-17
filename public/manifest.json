@@ -7,19 +7,19 @@
   "theme_color": "#dcdcdc",
   "icons": [
     {
-      "src": "/apple-touch-icon.png?v=2",
+      "src": "/apple-touch-icon.png?v=4",
       "sizes": "180x180",
       "type": "image/png"
     },
     {
-      "src": "/icon.png?v=2",
+      "src": "/icon.png?v=4",
       "sizes": "512x512",
       "type": "image/png"
     },
     {
-      "src": "/drq-home-logo.svg?v=1",
-      "sizes": "any",
-      "type": "image/svg+xml"
+      "src": "/drhome-logo.png?v=2",
+      "sizes": "1137x1133",
+      "type": "image/png"
     }
   ]
 }

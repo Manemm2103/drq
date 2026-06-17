@@ -21,7 +21,7 @@ const replyContent = document.getElementById('reply-preview-content');
 let currentReplyTo = null;
 let soundEnabled = true;
 let enterToSend = true;
-let runtimeVersionLabel = 'Version 1.2.2';
+let runtimeVersionLabel = 'Version 1.3.1';
 let currentChatMessages = [];
 let activeSearchTab = 'text';
 let contactStateCache = {
@@ -839,6 +839,27 @@ async function loadUsers() {
 
             controls.appendChild(passwordRow);
 
+            const emailRow = document.createElement('div');
+            emailRow.style.display = 'flex';
+            emailRow.style.alignItems = 'center';
+            emailRow.style.gap = '6px';
+            emailRow.style.marginTop = '8px';
+            emailRow.style.flexWrap = 'wrap';
+
+            const emailInput = document.createElement('input');
+            emailInput.type = 'email';
+            emailInput.placeholder = 'E-Mail für Wartungen';
+            emailInput.value = user.email || '';
+            emailInput.style.width = '220px';
+            emailRow.appendChild(emailInput);
+
+            const saveEmailBtn = document.createElement('button');
+            saveEmailBtn.innerText = 'E-Mail';
+            saveEmailBtn.onclick = () => updateUserEmail(user.id, emailInput);
+            emailRow.appendChild(saveEmailBtn);
+
+            controls.appendChild(emailRow);
+
             if ((user.active_sessions || []).length) {
                 const sessionList = document.createElement('div');
                 sessionList.className = 'session-list';
@@ -919,6 +940,7 @@ async function toggleMaintenanceBoardAccess(id, enabled) {
 async function createUser() {
     const username = document.getElementById('new-user').value;
     const password = document.getElementById('new-pass').value;
+    const email = document.getElementById('new-email').value;
     const role = document.getElementById('new-role').value;
     
     if (!username || !password) return alert("Bitte alle Felder ausfüllen!");
@@ -926,10 +948,11 @@ async function createUser() {
     try {
         await axios.post('/api/admin/users', { 
             requesterId: currentUser.id, // Auth check
-            username, password, role 
+            username, password, role, email
         });
         document.getElementById('new-user').value = '';
         document.getElementById('new-pass').value = '';
+        document.getElementById('new-email').value = '';
         loadUsers();
         alert("Benutzer angelegt!");
     } catch (err) {
@@ -966,6 +989,21 @@ async function updateUserPassword(id, passwordInput) {
         alert("Passwort geändert!");
     } catch (err) {
         alert(err.response?.data?.message || "Fehler beim Ändern des Passworts!");
+    }
+}
+
+async function updateUserEmail(id, emailInput) {
+    const email = String(emailInput.value || '').trim();
+
+    try {
+        await axios.put(`/api/admin/users/${id}/email`, {
+            requesterId: currentUser.id,
+            email
+        });
+        alert("E-Mail gespeichert!");
+        loadUsers();
+    } catch (err) {
+        alert(err.response?.data?.message || "Fehler beim Speichern der E-Mail!");
     }
 }
 

@@ -87,6 +87,7 @@ async function bootstrapBoard() {
         appState.plans = result.plans || [];
         renderSession(result.currentUser || appState.currentUser);
         renderBoard();
+        handleMaintenanceLinkTarget();
         document.getElementById('maintenance-content').hidden = false;
     } catch (error) {
         if ((error.message || '').includes('Kein Zugriff')) {
@@ -115,6 +116,17 @@ function renderBoard() {
     fillAssetSelect();
     fillCalendarAssetSelect();
     syncApartmentOptions();
+}
+
+function handleMaintenanceLinkTarget() {
+    const params = new URLSearchParams(window.location.search);
+    const planId = Number(params.get('plan') || 0);
+    if (!planId) return;
+
+    const plan = appState.plans.find((item) => Number(item.id) === planId);
+    if (!plan) return;
+
+    editPlan(planId);
 }
 
 function renderSummary() {

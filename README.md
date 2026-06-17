@@ -32,6 +32,20 @@ On first start, the app automatically migrates legacy local data from:
 - `IOBROKER_API_KEY`
 - `IOBROKER_SENDER_USERNAME` default: `ioBroker`
 
+## Optional maintenance mail variables
+
+- `SMTP_HOST`
+- `SMTP_PORT` default: `587`
+- `SMTP_SECURE` set to `true` for SMTPS, otherwise `false`
+- `SMTP_USER`
+- `SMTP_PASS`
+- `SMTP_FROM` sender address, for example `DRQ <noreply@example.com>`
+- `SMTP_REQUIRE_TLS` optional hard TLS requirement
+- `SMTP_TLS_REJECT_UNAUTHORIZED` default: `true`
+- `MAINTENANCE_PUBLIC_URL` public base URL used in mail links, for example `https://drq.example.com/maintenance.html`
+- `MAINTENANCE_MAIL_ENABLED` set to `true` to activate scheduled maintenance mails
+- `MAINTENANCE_MAIL_INTERVAL_MINUTES` default: `30`
+
 If `IOBROKER_API_KEY` is set, DRQ enables a protected endpoint for adapter-based message delivery from ioBroker.
 
 If you do not want to use environment variables, you can still provide a local `vapidKeys.json`, but that file should not be committed to a public Git repository.
@@ -67,6 +81,17 @@ TURN_USERNAME=your_turn_username
 TURN_CREDENTIAL=your_turn_password
 IOBROKER_API_KEY=your_shared_secret
 IOBROKER_SENDER_USERNAME=ioBroker
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=mailer@example.com
+SMTP_PASS=secret
+SMTP_FROM=DRQ <mailer@example.com>
+SMTP_REQUIRE_TLS=true
+SMTP_TLS_REJECT_UNAUTHORIZED=true
+MAINTENANCE_PUBLIC_URL=https://drq.example.com/maintenance.html
+MAINTENANCE_MAIL_ENABLED=true
+MAINTENANCE_MAIL_INTERVAL_MINUTES=30
 ```
 
 ### Reverse proxy
@@ -106,6 +131,8 @@ If you run a host firewall or upstream NAT, open or forward the same ports there
 If `IOBROKER_API_KEY` is configured, DRQ accepts status messages on:
 
 - `POST /api/integrations/iobroker/messages`
+
+If maintenance mail is enabled, users with a stored e-mail address and maintenance-board access also receive due-maintenance notifications with a direct link into the matching plan inside the board.
 
 Headers:
 

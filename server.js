@@ -7,6 +7,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const { v4: uuidv4 } = require('uuid');
 const ogs = require('open-graph-scraper');
 const appPackage = require('./package.json');
@@ -23,8 +24,20 @@ const legacyUploadsDir = path.join(__dirname, 'public/uploads');
 const legacyBackgroundsDir = path.join(__dirname, 'public/backgrounds');
 const iobrokerApiKey = String(process.env.IOBROKER_API_KEY || '').trim();
 const iobrokerSenderUsername = String(process.env.IOBROKER_SENDER_USERNAME || 'ioBroker').trim() || 'ioBroker';
+const smtpHost = String(process.env.SMTP_HOST || '').trim();
+const smtpPort = Number(process.env.SMTP_PORT || 587);
+const smtpSecure = String(process.env.SMTP_SECURE || '').trim() === '1' || String(process.env.SMTP_SECURE || '').trim().toLowerCase() === 'true';
+const smtpUser = String(process.env.SMTP_USER || '').trim();
+const smtpPass = String(process.env.SMTP_PASS || '').trim();
+const smtpFrom = String(process.env.SMTP_FROM || smtpUser || 'drq@localhost').trim();
+const smtpRequireTls = String(process.env.SMTP_REQUIRE_TLS || '').trim() === '1' || String(process.env.SMTP_REQUIRE_TLS || '').trim().toLowerCase() === 'true';
+const smtpRejectUnauthorized = !(String(process.env.SMTP_TLS_REJECT_UNAUTHORIZED || '1').trim() === '0' || String(process.env.SMTP_TLS_REJECT_UNAUTHORIZED || '1').trim().toLowerCase() === 'false');
+const maintenancePublicUrl = String(process.env.MAINTENANCE_PUBLIC_URL || '').trim();
+const maintenanceMailEnabled = !(String(process.env.MAINTENANCE_MAIL_ENABLED || '1').trim() === '0' || String(process.env.MAINTENANCE_MAIL_ENABLED || '1').trim().toLowerCase() === 'false');
+const maintenanceMailIntervalMinutes = Math.max(5, Number(process.env.MAINTENANCE_MAIL_INTERVAL_MINUTES || 30));
 const DEFAULT_THEME_KEY = 'graphite';
 const integrationPresenceTimers = new Map();
+let maintenanceMailTimer = null;
 
 function ensureDir(dirPath) {
     if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
@@ -542,6 +555,28 @@ function addDaysIso(baseDate, days) {
     return next.toISOString().slice(0, 10);
 }
 
+function createMailTransporter() {
+    if (!smtpHost || !smtpPort || !maintenanceMailEnabled) return null;
+    const transportConfig = {
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpSecure,
+        requireTLS: smtpRequireTls,
+        tls: {
+            rejectUnauthorized: smtpRejectUnauthorized
+        }
+    };
+    if (smtpUser || smtpPass) {
+        transportConfig.auth = {
+            user: smtpUser,
+            pass: smtpPass
+        };
+    }
+    return nodemailer.createTransport(transportConfig);
+}
+
+const mailTransporter = createMailTransporter();
+
 function logFailedLogin(req, rawUsername, normalizedUsername, password) {
     const debug = {
         event: 'login_failed',
@@ -617,6 +652,7 @@ db.exec(`
         uin INTEGER UNIQUE,
         username TEXT UNIQUE,
         display_name TEXT DEFAULT '',
+        email TEXT DEFAULT '',
         password TEXT,
         role TEXT DEFAULT 'user', -- admin, user
         avatar TEXT DEFAULT 'default.png',
@@ -746,6 +782,15 @@ db.exec(`
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(asset_id) REFERENCES maintenance_assets(id)
     );
+    CREATE TABLE IF NOT EXISTS maintenance_email_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER NOT NULL,
+        due_date TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        recipient_email TEXT NOT NULL,
+        sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(plan_id, due_date, user_id)
+    );
 `);
 
 // Migrations
@@ -754,6 +799,10 @@ try {
     if (!userCols.some(c => c.name === 'display_name')) {
         db.prepare("ALTER TABLE users ADD COLUMN display_name TEXT DEFAULT ''").run();
         console.log("Migration: Added display_name to users");
+    }
+    if (!userCols.some(c => c.name === 'email')) {
+        db.prepare("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''").run();
+        console.log("Migration: Added email to users");
     }
     if (!userCols.some(c => c.name === 'custom_status')) {
         db.prepare("ALTER TABLE users ADD COLUMN custom_status TEXT DEFAULT ''").run();
@@ -897,6 +946,15 @@ try {
             created_by INTEGER,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_email_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_id INTEGER NOT NULL,
+            due_date TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            recipient_email TEXT NOT NULL,
+            sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(plan_id, due_date, user_id)
         );
     `);
 } catch (e) { console.error("Migration error:", e); }
@@ -1622,6 +1680,7 @@ app.post('/api/login', (req, res) => {
                 uin: user.uin,
                 username: user.username,
                 display_name: user.display_name || '',
+                email: user.email || '',
                 avatar: user.avatar,
                 role: user.role,
                 chat_bg: user.chat_bg,
@@ -1680,6 +1739,7 @@ app.put('/api/profile/:id', (req, res) => {
         res.json({ success: true, user: { 
             id: updated.id, uin: updated.uin, username: updated.username,
             display_name: updated.display_name || '',
+            email: updated.email || '',
             avatar: updated.avatar, role: updated.role, chat_bg: updated.chat_bg,
             theme_key: updated.theme_key || DEFAULT_THEME_KEY,
             custom_status: updated.custom_status || '',
@@ -2306,6 +2366,179 @@ function getMaintenanceSummary() {
     };
 }
 
+function escapeHtmlForMail(value) {
+    return String(value || '').replace(/[&<>"']/g, (match) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    }[match]));
+}
+
+function buildMaintenancePlanLink(planId) {
+    const baseUrl = maintenancePublicUrl || '';
+    if (!baseUrl) return '';
+    const hasQuery = baseUrl.includes('?');
+    return `${baseUrl}${hasQuery ? '&' : '?'}plan=${encodeURIComponent(planId)}`;
+}
+
+function loadDueMaintenancePlans(todayIso) {
+    return db.prepare(`
+        SELECT
+            mp.id,
+            mp.title,
+            mp.interval_days,
+            mp.next_due_date,
+            mp.last_completed_at,
+            mp.responsible,
+            mp.priority,
+            mp.instructions,
+            ma.name AS asset_name,
+            ma.location AS asset_location,
+            ma.serial_number,
+            b.name AS building_name,
+            b.address AS building_address,
+            b.city AS building_city,
+            a.name AS apartment_name,
+            t.name AS template_name
+        FROM maintenance_plans mp
+        JOIN maintenance_assets ma ON ma.id = mp.asset_id
+        JOIN maintenance_buildings b ON b.id = ma.building_id
+        LEFT JOIN maintenance_apartments a ON a.id = ma.apartment_id
+        LEFT JOIN maintenance_asset_templates t ON t.id = ma.template_id
+        WHERE mp.active = 1
+          AND COALESCE(mp.next_due_date, '') <> ''
+          AND mp.next_due_date <= ?
+        ORDER BY mp.next_due_date ASC, mp.priority DESC, mp.title COLLATE NOCASE ASC
+    `).all(todayIso);
+}
+
+function loadMaintenanceMailRecipients() {
+    return db.prepare(`
+        SELECT id, username, display_name, email, role
+        FROM users
+        WHERE COALESCE(email, '') <> ''
+          AND (role = 'admin' OR can_access_maintenance_board = 1)
+        ORDER BY username COLLATE NOCASE ASC
+    `).all();
+}
+
+function buildMaintenanceMail(plan, recipient) {
+    const link = buildMaintenancePlanLink(plan.id);
+    const subject = `DR-MAINTENANCE BOARD: Wartung fällig - ${plan.title}`;
+    const lines = [
+        `Hallo ${recipient.display_name || recipient.username},`,
+        '',
+        'eine Wartung ist fällig.',
+        '',
+        `Titel: ${plan.title}`,
+        `Gebäude: ${plan.building_name || '-'}`,
+        `Apartment: ${plan.apartment_name || '-'}`,
+        `Wartungsobjekt: ${plan.asset_name || '-'}`,
+        `Typ: ${plan.template_name || '-'}`,
+        `Termin: ${plan.next_due_date || '-'}`,
+        `Verantwortlich: ${plan.responsible || '-'}`,
+        `Priorität: ${plan.priority || '-'}`,
+        `Intervall: ${plan.interval_days || 0} Tage`,
+        `Ort: ${plan.asset_location || '-'}`,
+        `Seriennummer: ${plan.serial_number || '-'}`,
+        `Zuletzt erledigt: ${plan.last_completed_at || '-'}`,
+        `Anweisung: ${plan.instructions || '-'}`,
+        ''
+    ];
+    if (link) {
+        lines.push(`Direkt zur Wartung: ${link}`);
+        lines.push('');
+    }
+    lines.push('Viele Grüße');
+    lines.push('DR-MAINTENANCE BOARD');
+
+    const html = `
+        <div style="font-family:Arial,sans-serif;color:#111;line-height:1.5">
+            <h2 style="margin:0 0 14px">DR-MAINTENANCE BOARD</h2>
+            <p>Hallo ${escapeHtmlForMail(recipient.display_name || recipient.username)},</p>
+            <p>eine Wartung ist fällig.</p>
+            <table style="border-collapse:collapse;width:100%;max-width:720px">
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Titel</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.title)}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Gebäude</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.building_name || '-')}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Apartment</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.apartment_name || '-')}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Wartungsobjekt</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.asset_name || '-')}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Typ</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.template_name || '-')}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Termin</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.next_due_date || '-')}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Verantwortlich</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.responsible || '-')}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Priorität</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.priority || '-')}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Intervall</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(`${plan.interval_days || 0} Tage`)}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Ort</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.asset_location || '-')}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Seriennummer</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.serial_number || '-')}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Zuletzt erledigt</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.last_completed_at || '-')}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Anweisung</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.instructions || '-')}</td></tr>
+            </table>
+            ${link ? `<p style="margin-top:16px"><a href="${escapeHtmlForMail(link)}" style="display:inline-block;padding:10px 14px;background:#111827;color:#fff;text-decoration:none;border-radius:8px">Direkt zur Wartung</a></p>` : ''}
+            <p>Viele Grüße<br>DR-MAINTENANCE BOARD</p>
+        </div>
+    `;
+    return {
+        subject,
+        text: lines.join('\n'),
+        html
+    };
+}
+
+async function sendDueMaintenanceEmails() {
+    if (!mailTransporter || !maintenanceMailEnabled) return;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const plans = loadDueMaintenancePlans(todayIso);
+    if (!plans.length) return;
+
+    const recipients = loadMaintenanceMailRecipients();
+    if (!recipients.length) return;
+
+    for (const plan of plans) {
+        for (const recipient of recipients) {
+            const alreadySent = db.prepare(`
+                SELECT id
+                FROM maintenance_email_log
+                WHERE plan_id = ? AND due_date = ? AND user_id = ?
+            `).get(plan.id, plan.next_due_date, recipient.id);
+            if (alreadySent) continue;
+
+            const message = buildMaintenanceMail(plan, recipient);
+            try {
+                await mailTransporter.sendMail({
+                    from: smtpFrom,
+                    to: recipient.email,
+                    subject: message.subject,
+                    text: message.text,
+                    html: message.html
+                });
+                db.prepare(`
+                    INSERT INTO maintenance_email_log (plan_id, due_date, user_id, recipient_email)
+                    VALUES (?, ?, ?, ?)
+                `).run(plan.id, plan.next_due_date, recipient.id, recipient.email);
+            } catch (error) {
+                console.error('Maintenance mail send failed', {
+                    planId: plan.id,
+                    recipient: recipient.email,
+                    message: error.message || String(error)
+                });
+            }
+        }
+    }
+}
+
+function startMaintenanceMailLoop() {
+    if (!mailTransporter || !maintenanceMailEnabled || maintenanceMailTimer) return;
+    sendDueMaintenanceEmails().catch((error) => {
+        console.error('Initial maintenance mail run failed', error);
+    });
+    maintenanceMailTimer = setInterval(() => {
+        sendDueMaintenanceEmails().catch((error) => {
+            console.error('Scheduled maintenance mail run failed', error);
+        });
+    }, maintenanceMailIntervalMinutes * 60 * 1000);
+}
+
 app.get('/api/maintenance/bootstrap', (req, res) => {
     const requester = requireMaintenanceUser(req, res);
     if (!requester) return;
@@ -2733,7 +2966,7 @@ function getActiveSessionsForUser(userId) {
 // Admin: Get all users
 app.get('/api/admin/users', (req, res) => {
     // Ideally verify requester via session/token. For now open internally.
-    const users = db.prepare('SELECT id, uin, username, display_name, role, avatar, status, can_chat, can_access_maintenance_board FROM users').all()
+    const users = db.prepare('SELECT id, uin, username, display_name, email, role, avatar, status, can_chat, can_access_maintenance_board FROM users').all()
         .map((user) => {
             const activeSessions = getActiveSessionsForUser(user.id);
             return {
@@ -2813,7 +3046,7 @@ app.put('/api/admin/users/:id/toggle-maintenance-board', (req, res) => {
 
 // Admin: Create User (Strict Check)
 app.post('/api/admin/users', (req, res) => {
-    const { requesterId, username, password, role } = req.body;
+    const { requesterId, username, password, role, email } = req.body;
     
     // Check if requester is admin
     const requester = db.prepare('SELECT role FROM users WHERE id = ?').get(requesterId);
@@ -2828,11 +3061,24 @@ app.post('/api/admin/users', (req, res) => {
     try {
         const hash = bcrypt.hashSync(password, 10);
         const uin = generateUIN();
-        const result = db.prepare('INSERT INTO users (uin, username, password, role) VALUES (?, ?, ?, ?)').run(uin, username, hash, role || 'user');
+        const result = db.prepare('INSERT INTO users (uin, username, password, role, email) VALUES (?, ?, ?, ?, ?)').run(uin, username, hash, role || 'user', String(email || '').trim());
         res.json({ success: true, id: result.lastInsertRowid, uin: uin });
     } catch (err) {
         res.status(500).json({ success: false, message: 'Fehler beim Anlegen' });
     }
+});
+
+app.put('/api/admin/users/:id/email', (req, res) => {
+    const { id } = req.params;
+    const { requesterId, email } = req.body;
+
+    const requester = db.prepare('SELECT role FROM users WHERE id = ?').get(requesterId);
+    if (!requester || requester.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Nur Admins dürfen das!' });
+    }
+
+    db.prepare('UPDATE users SET email = ? WHERE id = ?').run(String(email || '').trim(), id);
+    res.json({ success: true });
 });
 
 // Admin: Update User Role
@@ -3241,5 +3487,6 @@ io.on('connection', (socket) => {
 
 const PORT = Number(process.env.PORT || 3000);
 server.listen(PORT, '0.0.0.0', () => {
+    startMaintenanceMailLoop();
     console.log(`Server running on http://0.0.0.0:${PORT}`);
 });
