@@ -44,6 +44,9 @@ On first start, the app automatically migrates legacy local data from:
 - `SMTP_TLS_REJECT_UNAUTHORIZED` default: `true`
 - `MAINTENANCE_PUBLIC_URL` public base URL used in mail links, for example `https://drq.example.com/maintenance.html`
 - `MAINTENANCE_MAIL_ENABLED` set to `true` to activate scheduled maintenance mails
+- `MAINTENANCE_MAIL_SCHEDULE` default: `nightly`, alternative: `interval`
+- `MAINTENANCE_MAIL_HOUR` default: `2`
+- `MAINTENANCE_MAIL_MINUTE` default: `0`
 - `MAINTENANCE_MAIL_INTERVAL_MINUTES` default: `30`
 
 If `IOBROKER_API_KEY` is set, DRQ enables a protected endpoint for adapter-based message delivery from ioBroker.
@@ -91,6 +94,9 @@ SMTP_REQUIRE_TLS=true
 SMTP_TLS_REJECT_UNAUTHORIZED=true
 MAINTENANCE_PUBLIC_URL=https://drq.example.com/maintenance.html
 MAINTENANCE_MAIL_ENABLED=true
+MAINTENANCE_MAIL_SCHEDULE=nightly
+MAINTENANCE_MAIL_HOUR=2
+MAINTENANCE_MAIL_MINUTE=0
 MAINTENANCE_MAIL_INTERVAL_MINUTES=30
 ```
 

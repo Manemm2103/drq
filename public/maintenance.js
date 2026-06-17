@@ -101,6 +101,10 @@ async function bootstrapBoard() {
 function renderSession(user) {
     document.getElementById('session-user').textContent = getVisibleName(user);
     document.getElementById('session-role').textContent = user.role === 'admin' ? 'Administrator' : 'Board-Benutzer';
+    const testMailButton = document.getElementById('maintenance-test-mail-btn');
+    if (testMailButton) {
+        testMailButton.hidden = user.role !== 'admin';
+    }
 }
 
 function renderBoard() {
@@ -853,6 +857,18 @@ async function completePlan(id) {
         await reloadBoardData();
     } catch (error) {
         showAlert(error.message || 'Plan konnte nicht abgeschlossen werden.', 'error');
+    }
+}
+
+async function sendMaintenanceTestMail() {
+    try {
+        const result = await api('/api/maintenance/test-mail', {
+            method: 'POST',
+            body: { requesterId: appState.currentUser.id }
+        });
+        showAlert(result.message || 'Testmail wurde versendet.', 'success');
+    } catch (error) {
+        showAlert(error.message || 'Testmail konnte nicht versendet werden.', 'error');
     }
 }
 

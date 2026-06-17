@@ -35,9 +35,13 @@ const smtpRejectUnauthorized = !(String(process.env.SMTP_TLS_REJECT_UNAUTHORIZED
 const maintenancePublicUrl = String(process.env.MAINTENANCE_PUBLIC_URL || '').trim();
 const maintenanceMailEnabled = !(String(process.env.MAINTENANCE_MAIL_ENABLED || '1').trim() === '0' || String(process.env.MAINTENANCE_MAIL_ENABLED || '1').trim().toLowerCase() === 'false');
 const maintenanceMailIntervalMinutes = Math.max(5, Number(process.env.MAINTENANCE_MAIL_INTERVAL_MINUTES || 30));
+const maintenanceMailSchedule = String(process.env.MAINTENANCE_MAIL_SCHEDULE || 'nightly').trim().toLowerCase();
+const maintenanceMailHour = Math.min(23, Math.max(0, Number(process.env.MAINTENANCE_MAIL_HOUR || 2)));
+const maintenanceMailMinute = Math.min(59, Math.max(0, Number(process.env.MAINTENANCE_MAIL_MINUTE || 0)));
 const DEFAULT_THEME_KEY = 'graphite';
 const integrationPresenceTimers = new Map();
 let maintenanceMailTimer = null;
+let maintenanceMailLastRunDate = '';
 
 function ensureDir(dirPath) {
     if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
@@ -511,7 +515,7 @@ function getRequesterUser(req) {
     const requesterId = getRequesterIdFromRequest(req);
     if (!requesterId) return null;
     return db.prepare(`
-        SELECT id, uin, username, display_name, role, can_access_maintenance_board
+        SELECT id, uin, username, display_name, email, role, can_access_maintenance_board
         FROM users
         WHERE id = ?
     `).get(requesterId) || null;
@@ -576,6 +580,20 @@ function createMailTransporter() {
 }
 
 const mailTransporter = createMailTransporter();
+
+function getLocalIsoDate(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function getMaintenanceScheduleLabel() {
+    if (maintenanceMailSchedule === 'interval') {
+        return `alle ${maintenanceMailIntervalMinutes} Minuten`;
+    }
+    return `täglich um ${String(maintenanceMailHour).padStart(2, '0')}:${String(maintenanceMailMinute).padStart(2, '0')} Uhr`;
+}
 
 function logFailedLogin(req, rawUsername, normalizedUsername, password) {
     const debug = {
@@ -2383,6 +2401,10 @@ function buildMaintenancePlanLink(planId) {
     return `${baseUrl}${hasQuery ? '&' : '?'}plan=${encodeURIComponent(planId)}`;
 }
 
+function buildMaintenanceBoardLink() {
+    return maintenancePublicUrl || '';
+}
+
 function loadDueMaintenancePlans(todayIso) {
     return db.prepare(`
         SELECT
@@ -2422,6 +2444,24 @@ function loadMaintenanceMailRecipients() {
           AND (role = 'admin' OR can_access_maintenance_board = 1)
         ORDER BY username COLLATE NOCASE ASC
     `).all();
+}
+
+function loadNextMaintenancePlan() {
+    return db.prepare(`
+        SELECT mp.id, mp.title, mp.interval_days, mp.next_due_date, mp.last_completed_at, mp.responsible, mp.priority, mp.instructions, mp.active,
+               ma.name AS asset_name, ma.location AS asset_location, ma.serial_number,
+               mb.name AS building_name,
+               ap.name AS apartment_name,
+               mt.name AS template_name
+        FROM maintenance_plans mp
+        JOIN maintenance_assets ma ON ma.id = mp.asset_id
+        LEFT JOIN maintenance_buildings mb ON mb.id = ma.building_id
+        LEFT JOIN maintenance_apartments ap ON ap.id = ma.apartment_id
+        LEFT JOIN maintenance_asset_templates mt ON mt.id = ma.template_id
+        WHERE mp.active = 1
+        ORDER BY mp.next_due_date ASC, mp.id ASC
+        LIMIT 1
+    `).get() || null;
 }
 
 function buildMaintenanceMail(plan, recipient) {
@@ -2485,9 +2525,53 @@ function buildMaintenanceMail(plan, recipient) {
     };
 }
 
+function buildMaintenanceTestMail(recipient) {
+    const nextPlan = loadNextMaintenancePlan();
+    if (nextPlan) {
+        const message = buildMaintenanceMail(nextPlan, recipient);
+        return {
+            subject: `[TEST] ${message.subject}`,
+            text: `Dies ist ein Test des DRQ-Mailversands.\nGeplanter Versandrhythmus: ${getMaintenanceScheduleLabel()}\n\n${message.text}`,
+            html: `
+                <div style="font-family:Arial,sans-serif;color:#111;line-height:1.5">
+                    <p><strong>Dies ist ein Test des DRQ-Mailversands.</strong></p>
+                    <p>Geplanter Versandrhythmus: ${escapeHtmlForMail(getMaintenanceScheduleLabel())}</p>
+                    <hr style="margin:18px 0;border:none;border-top:1px solid #ddd">
+                    ${message.html}
+                </div>
+            `
+        };
+    }
+
+    const boardLink = buildMaintenanceBoardLink();
+    const textLines = [
+        'Dies ist ein Test des DRQ-Mailversands.',
+        `Geplanter Versandrhythmus: ${getMaintenanceScheduleLabel()}`,
+        '',
+        'Aktuell ist noch kein aktiver Wartungsplan vorhanden.'
+    ];
+    if (boardLink) {
+        textLines.push(`Board öffnen: ${boardLink}`);
+    }
+
+    return {
+        subject: '[TEST] DR-MAINTENANCE BOARD Mailversand',
+        text: textLines.join('\n'),
+        html: `
+            <div style="font-family:Arial,sans-serif;color:#111;line-height:1.5">
+                <h2 style="margin:0 0 14px">DR-MAINTENANCE BOARD</h2>
+                <p><strong>Dies ist ein Test des DRQ-Mailversands.</strong></p>
+                <p>Geplanter Versandrhythmus: ${escapeHtmlForMail(getMaintenanceScheduleLabel())}</p>
+                <p>Aktuell ist noch kein aktiver Wartungsplan vorhanden.</p>
+                ${boardLink ? `<p><a href="${escapeHtmlForMail(boardLink)}" style="display:inline-block;padding:10px 14px;background:#111827;color:#fff;text-decoration:none;border-radius:8px">Board öffnen</a></p>` : ''}
+            </div>
+        `
+    };
+}
+
 async function sendDueMaintenanceEmails() {
     if (!mailTransporter || !maintenanceMailEnabled) return;
-    const todayIso = new Date().toISOString().slice(0, 10);
+    const todayIso = getLocalIsoDate();
     const plans = loadDueMaintenancePlans(todayIso);
     if (!plans.length) return;
 
@@ -2529,14 +2613,44 @@ async function sendDueMaintenanceEmails() {
 
 function startMaintenanceMailLoop() {
     if (!mailTransporter || !maintenanceMailEnabled || maintenanceMailTimer) return;
-    sendDueMaintenanceEmails().catch((error) => {
-        console.error('Initial maintenance mail run failed', error);
-    });
-    maintenanceMailTimer = setInterval(() => {
+    if (maintenanceMailSchedule === 'interval') {
         sendDueMaintenanceEmails().catch((error) => {
-            console.error('Scheduled maintenance mail run failed', error);
+            console.error('Initial maintenance mail run failed', error);
         });
-    }, maintenanceMailIntervalMinutes * 60 * 1000);
+        maintenanceMailTimer = setInterval(() => {
+            sendDueMaintenanceEmails().catch((error) => {
+                console.error('Scheduled maintenance mail run failed', error);
+            });
+        }, maintenanceMailIntervalMinutes * 60 * 1000);
+        return;
+    }
+
+    const scheduleNextNightlyRun = () => {
+        const now = new Date();
+        const nextRun = new Date(now);
+        nextRun.setHours(maintenanceMailHour, maintenanceMailMinute, 0, 0);
+        if (nextRun <= now) {
+            nextRun.setDate(nextRun.getDate() + 1);
+        }
+
+        const delay = Math.max(60 * 1000, nextRun.getTime() - now.getTime());
+        maintenanceMailTimer = setTimeout(async () => {
+            try {
+                const runDate = getLocalIsoDate();
+                if (maintenanceMailLastRunDate !== runDate) {
+                    await sendDueMaintenanceEmails();
+                    maintenanceMailLastRunDate = runDate;
+                }
+            } catch (error) {
+                console.error('Scheduled nightly maintenance mail run failed', error);
+            } finally {
+                maintenanceMailTimer = null;
+                scheduleNextNightlyRun();
+            }
+        }, delay);
+    };
+
+    scheduleNextNightlyRun();
 }
 
 app.get('/api/maintenance/bootstrap', (req, res) => {
@@ -2558,6 +2672,42 @@ app.get('/api/maintenance/bootstrap', (req, res) => {
         assets: listMaintenanceAssets(),
         plans: listMaintenancePlans()
     });
+});
+
+app.post('/api/maintenance/test-mail', async (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    if (requester.role !== 'admin') {
+        return res.status(403).json({ success: false, message: 'Nur Admins dürfen Testmails senden.' });
+    }
+    if (!mailTransporter || !maintenanceMailEnabled) {
+        return res.status(400).json({ success: false, message: 'Mailversand ist nicht aktiv konfiguriert.' });
+    }
+
+    const targetEmail = String(requester.email || '').trim();
+    if (!targetEmail) {
+        return res.status(400).json({ success: false, message: 'Bitte hinterlege zuerst eine E-Mail-Adresse bei deinem Admin-Benutzer.' });
+    }
+
+    try {
+        const message = buildMaintenanceTestMail(requester);
+        await mailTransporter.sendMail({
+            from: smtpFrom,
+            to: targetEmail,
+            subject: message.subject,
+            text: message.text,
+            html: message.html
+        });
+        res.json({
+            success: true,
+            message: `Testmail an ${targetEmail} versendet.`,
+            schedule: getMaintenanceScheduleLabel()
+        });
+    } catch (error) {
+        console.error('Maintenance test mail failed', error);
+        res.status(500).json({ success: false, message: error.message || 'Testmail konnte nicht versendet werden.' });
+    }
 });
 
 app.post('/api/maintenance/buildings', (req, res) => {

@@ -134,6 +134,14 @@ textarea {
     margin-bottom: 18px;
 }
 
+.header-right {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
 .maintenance-header h2 {
     margin: 4px 0 0;
     font-size: 1.9rem;
