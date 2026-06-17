@@ -249,12 +249,22 @@ textarea {
 
 .editor-layout {
     display: grid;
-    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 18px;
 }
 
-.calendar-layout {
-    grid-template-columns: minmax(0, 1fr) 320px;
+.editor-layout > .surface:first-child {
+    width: 100%;
+    max-width: 920px;
+    margin: 0 auto;
+}
+
+.calendar-layout > .surface:first-child {
+    max-width: none;
+}
+
+.editor-layout > .surface:not(:first-child) {
+    width: 100%;
 }
 
 .stack-form {
