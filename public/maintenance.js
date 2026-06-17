@@ -1114,8 +1114,9 @@ function renderDayCalendar() {
 
 function renderCalendarEventCard(plan) {
     const priority = String(plan.priority || 'normal').toLowerCase();
+    const dueState = getPlanDueState(plan);
     return `
-        <div class="calendar-event-card ${escapeHtml(priority)}" onclick="handleCalendarEventClick(event, ${plan.id})">
+        <div class="calendar-event-card ${escapeHtml(priority)} ${escapeHtml(dueState)}" onclick="handleCalendarEventClick(event, ${plan.id})">
             <strong>${escapeHtml(plan.title)}</strong>
             <div>${escapeHtml(plan.asset_name || '-')}</div>
             <div class="muted-copy">${escapeHtml(plan.building_name || '-')}</div>
@@ -1150,6 +1151,28 @@ function getFilteredCalendarPlans() {
         plan.instructions,
         plan.last_completion_note
     ], appState.filters.calendar));
+}
+
+function getPlanDueState(plan) {
+    if (!plan || !plan.active || !plan.next_due_date) return '';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const dueDate = new Date(plan.next_due_date);
+    if (Number.isNaN(dueDate.getTime())) return '';
+    dueDate.setHours(0, 0, 0, 0);
+
+    if (dueDate < today) {
+        return 'overdue';
+    }
+
+    const soonLimit = new Date(today);
+    soonLimit.setDate(soonLimit.getDate() + 30);
+    if (dueDate <= soonLimit) {
+        return 'due-soon';
+    }
+
+    return '';
 }
 
 function startOfWeek(baseDate) {

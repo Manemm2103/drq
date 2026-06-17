@@ -560,6 +560,18 @@ th {
     color: #b91c1c;
 }
 
+.calendar-event-card.due-soon {
+    background: #fef3c7;
+    border-color: #fcd34d;
+    color: #92400e;
+}
+
+.calendar-event-card.overdue {
+    background: #fee2e2;
+    border-color: #f87171;
+    color: #b91c1c;
+}
+
 .calendar-empty {
     padding: 26px;
     text-align: center;
