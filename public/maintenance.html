@@ -11,7 +11,7 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=4">
     <link rel="icon" type="image/png" href="/drhome-logo.png?v=2">
     <link rel="manifest" href="/manifest.json">
-    <link rel="stylesheet" href="maintenance.css?v=9">
+    <link rel="stylesheet" href="maintenance.css?v=10">
 </head>
 <body>
     <div class="maintenance-shell">
@@ -54,7 +54,7 @@
                 </div>
                 <div class="header-right">
                     <button id="maintenance-test-mail-btn" class="action-btn secondary" type="button" onclick="sendMaintenanceTestMail()" hidden>Testmail senden</button>
-                    <div id="board-version" class="board-version">Version 1.4.4</div>
+                    <div id="board-version" class="board-version">Version 1.5.0</div>
                 </div>
             </header>
 
@@ -75,6 +75,7 @@
                         <div class="summary-tile"><span>Aktive Pläne</span><strong id="summary-active-plans">0</strong></div>
                         <div class="summary-tile warn"><span>Bald fällig</span><strong id="summary-due-soon">0</strong></div>
                         <div class="summary-tile danger"><span>Überfällig</span><strong id="summary-overdue">0</strong></div>
+                        <div class="summary-tile danger"><span>Eskalation</span><strong id="summary-escalated">0</strong></div>
                     </div>
 
                     <div class="surface">
@@ -434,7 +435,105 @@
                                 <input type="hidden" id="plan-id">
                                 <label>Wartungsobjekt<select id="plan-asset" required></select></label>
                                 <label>Titel<input type="text" id="plan-title" required placeholder="Wird automatisch aus dem Wartungsobjekt vorgeschlagen"></label>
-                                <label>Intervall (Tage)<input type="number" id="plan-interval-days" min="1" value="180"></label>
+                                <label id="plan-interval-days-wrap">Intervall (Tage)<input type="number" id="plan-interval-days" min="1" value="180"></label>
+                                <label>Wiederholungsregel
+                                    <select id="plan-recurrence-type">
+                                        <option value="interval" selected>Intervall in Tagen</option>
+                                        <option value="monthly">Monatlich am Datum</option>
+                                        <option value="monthly_weekday">Monatlich am Wochentag</option>
+                                        <option value="yearly">Jährlich</option>
+                                    </select>
+                                </label>
+                                <label id="plan-recurrence-interval-wrap" hidden>Wiederholt sich alle
+                                    <input type="number" id="plan-recurrence-interval" min="1" value="180">
+                                </label>
+                                <label id="plan-recurrence-day-wrap" hidden>Tag im Monat
+                                    <input type="number" id="plan-recurrence-day-of-month" min="1" max="31" value="1">
+                                </label>
+                                <div id="plan-recurrence-weekday-wrap" class="inline-grid-2" hidden>
+                                    <label>Woche im Monat
+                                        <select id="plan-recurrence-week-of-month">
+                                            <option value="1">1.</option>
+                                            <option value="2">2.</option>
+                                            <option value="3">3.</option>
+                                            <option value="4">4.</option>
+                                            <option value="5">Letzter</option>
+                                        </select>
+                                    </label>
+                                    <label>Wochentag
+                                        <select id="plan-recurrence-weekday">
+                                            <option value="1" selected>Montag</option>
+                                            <option value="2">Dienstag</option>
+                                            <option value="3">Mittwoch</option>
+                                            <option value="4">Donnerstag</option>
+                                            <option value="5">Freitag</option>
+                                            <option value="6">Samstag</option>
+                                            <option value="7">Sonntag</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <div id="plan-recurrence-yearly-wrap" class="inline-grid-2" hidden>
+                                    <label>Tag
+                                        <input type="number" id="plan-recurrence-yearly-day" min="1" max="31" value="1">
+                                    </label>
+                                    <label>Monat
+                                        <select id="plan-recurrence-month-of-year">
+                                            <option value="1">Januar</option>
+                                            <option value="2">Februar</option>
+                                            <option value="3">März</option>
+                                            <option value="4">April</option>
+                                            <option value="5">Mai</option>
+                                            <option value="6">Juni</option>
+                                            <option value="7">Juli</option>
+                                            <option value="8">August</option>
+                                            <option value="9">September</option>
+                                            <option value="10">Oktober</option>
+                                            <option value="11">November</option>
+                                            <option value="12">Dezember</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <div class="inline-grid-2">
+                                    <label>Saisonstart
+                                        <select id="plan-season-start-month">
+                                            <option value="">Keine Saison</option>
+                                            <option value="1">Januar</option>
+                                            <option value="2">Februar</option>
+                                            <option value="3">März</option>
+                                            <option value="4">April</option>
+                                            <option value="5">Mai</option>
+                                            <option value="6">Juni</option>
+                                            <option value="7">Juli</option>
+                                            <option value="8">August</option>
+                                            <option value="9">September</option>
+                                            <option value="10">Oktober</option>
+                                            <option value="11">November</option>
+                                            <option value="12">Dezember</option>
+                                        </select>
+                                    </label>
+                                    <label>Saisonende
+                                        <select id="plan-season-end-month">
+                                            <option value="">Keine Saison</option>
+                                            <option value="1">Januar</option>
+                                            <option value="2">Februar</option>
+                                            <option value="3">März</option>
+                                            <option value="4">April</option>
+                                            <option value="5">Mai</option>
+                                            <option value="6">Juni</option>
+                                            <option value="7">Juli</option>
+                                            <option value="8">August</option>
+                                            <option value="9">September</option>
+                                            <option value="10">Oktober</option>
+                                            <option value="11">November</option>
+                                            <option value="12">Dezember</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <label class="inline-check"><input type="checkbox" id="plan-shift-to-workday"> Termin automatisch auf Werktag verschieben</label>
+                                <label>Eskalation nach Überfälligkeit (Tage)
+                                    <input type="number" id="plan-escalation-after-days" min="0" value="0">
+                                </label>
+                                <div id="plan-recurrence-summary-preview" class="muted-copy">Alle 180 Tage</div>
                                 <label>Nächster Termin<input type="date" id="plan-next-due-date"></label>
                                 <label>Zuletzt erledigt<input type="date" id="plan-last-completed-at"></label>
                                 <label>Zugewiesener Mitarbeiter<select id="plan-staff"></select></label>
@@ -566,6 +665,6 @@
         </main>
     </div>
 
-    <script src="maintenance.js?v=14"></script>
+    <script src="maintenance.js?v=15"></script>
 </body>
 </html>

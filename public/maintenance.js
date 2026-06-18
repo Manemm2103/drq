@@ -1,4 +1,6 @@
 const storageKey = 'icq_user';
+const recurrenceMonthLabels = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+const recurrenceWeekdayLabels = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
 const appState = {
     currentUser: null,
     maintenanceMode: 'manager',
@@ -95,7 +97,25 @@ function bindForms() {
     document.getElementById('plan-asset').addEventListener('change', hydratePlanFromAsset);
     document.getElementById('calendar-plan-asset').addEventListener('change', hydrateCalendarTitleFromAsset);
     document.getElementById('plan-completion-photos').addEventListener('change', handleCompletionPhotoSelection);
+    [
+        'plan-recurrence-type',
+        'plan-recurrence-interval',
+        'plan-recurrence-day-of-month',
+        'plan-recurrence-week-of-month',
+        'plan-recurrence-weekday',
+        'plan-recurrence-yearly-day',
+        'plan-recurrence-month-of-year',
+        'plan-season-start-month',
+        'plan-season-end-month',
+        'plan-shift-to-workday',
+        'plan-escalation-after-days',
+        'plan-interval-days'
+    ].forEach((id) => {
+        document.getElementById(id).addEventListener('change', updatePlanRecurrenceUi);
+        document.getElementById(id).addEventListener('input', updatePlanRecurrenceUi);
+    });
     initializeSignaturePad();
+    updatePlanRecurrenceUi();
 }
 
 async function bootstrapBoard() {
@@ -229,6 +249,7 @@ function renderSummary() {
     document.getElementById('summary-active-plans').textContent = appState.summary.activePlans || 0;
     document.getElementById('summary-due-soon').textContent = appState.summary.dueSoonPlans || 0;
     document.getElementById('summary-overdue').textContent = appState.summary.overduePlans || 0;
+    document.getElementById('summary-escalated').textContent = appState.summary.escalatedPlans || 0;
 
     const topPlans = [...appState.plans]
         .filter((plan) => plan.active)
@@ -459,6 +480,7 @@ function renderPlans() {
         plan.staff_name,
         plan.responsible,
         plan.priority,
+        plan.recurrence_summary,
         plan.instructions,
         plan.last_completion_note
     ], appState.filters.plans));
@@ -468,10 +490,16 @@ function renderPlans() {
     }
     body.innerHTML = filteredPlans.map((plan) => `
         <tr class="clickable-row" onclick="editPlan(${plan.id})">
-            <td><strong>${escapeHtml(plan.title)}</strong></td>
+            <td>
+                <strong>${escapeHtml(plan.title)}</strong>
+                <div class="muted-copy">${escapeHtml(plan.recurrence_summary || '')}</div>
+            </td>
             <td>${escapeHtml(plan.asset_name || '-')}</td>
             <td>${escapeHtml(plan.building_name || '-')}</td>
-            <td>${formatDate(plan.next_due_date)}</td>
+            <td>
+                ${formatDate(plan.next_due_date)}
+                ${getPlanDueState(plan) === 'escalated' ? '<div class="muted-copy">Eskalation aktiv</div>' : ''}
+            </td>
             <td>${escapeHtml(getResponsibleLabel(plan))}</td>
             <td>${renderPriority(plan.priority)}</td>
             <td>
@@ -587,6 +615,90 @@ function renderArchiveDetail(entry) {
             </div>
         ` : ''}
     `;
+}
+
+function updatePlanRecurrenceUi() {
+    const recurrenceType = document.getElementById('plan-recurrence-type').value || 'interval';
+    const intervalDaysWrap = document.getElementById('plan-interval-days-wrap');
+    const recurrenceIntervalWrap = document.getElementById('plan-recurrence-interval-wrap');
+    document.getElementById('plan-recurrence-day-wrap').hidden = recurrenceType !== 'monthly';
+    document.getElementById('plan-recurrence-weekday-wrap').hidden = recurrenceType !== 'monthly_weekday';
+    document.getElementById('plan-recurrence-yearly-wrap').hidden = recurrenceType !== 'yearly';
+
+    const recurrenceInterval = document.getElementById('plan-recurrence-interval');
+    const intervalDays = document.getElementById('plan-interval-days');
+    if (recurrenceType === 'interval') {
+        recurrenceInterval.value = intervalDays.value || 180;
+        intervalDaysWrap.hidden = false;
+        recurrenceIntervalWrap.hidden = true;
+    } else {
+        intervalDaysWrap.hidden = true;
+        recurrenceIntervalWrap.hidden = false;
+        recurrenceInterval.value = Math.max(1, Number(recurrenceInterval.value || 1));
+        const labelText = recurrenceType === 'yearly' ? 'Wiederholt sich alle Jahre' : 'Wiederholt sich alle Monate';
+        recurrenceIntervalWrap.childNodes[0].textContent = labelText;
+    }
+    refreshPlanRecurrencePreview();
+}
+
+function getPlanRecurrenceFormData() {
+    const recurrenceType = document.getElementById('plan-recurrence-type').value || 'interval';
+    const intervalDays = Number(document.getElementById('plan-interval-days').value || 180);
+    const recurrenceIntervalRaw = Number(document.getElementById('plan-recurrence-interval').value || (recurrenceType === 'interval' ? intervalDays : 1));
+    return {
+        recurrence_type: recurrenceType,
+        interval_days: Math.max(1, intervalDays || 180),
+        recurrence_interval: Math.max(1, recurrenceIntervalRaw || 1),
+        recurrence_day_of_month: recurrenceType === 'yearly'
+            ? (Number(document.getElementById('plan-recurrence-yearly-day').value || 0) || null)
+            : (Number(document.getElementById('plan-recurrence-day-of-month').value || 0) || null),
+        recurrence_month_of_year: Number(document.getElementById('plan-recurrence-month-of-year').value || 0) || null,
+        recurrence_week_of_month: Number(document.getElementById('plan-recurrence-week-of-month').value || 0) || null,
+        recurrence_weekday: Number(document.getElementById('plan-recurrence-weekday').value || 0) || null,
+        season_start_month: Number(document.getElementById('plan-season-start-month').value || 0) || null,
+        season_end_month: Number(document.getElementById('plan-season-end-month').value || 0) || null,
+        shift_to_workday: document.getElementById('plan-shift-to-workday').checked,
+        escalation_after_days: Number(document.getElementById('plan-escalation-after-days').value || 0) || 0
+    };
+}
+
+function buildRecurrenceSummaryFromForm(data) {
+    const weekLabels = { 1: '1.', 2: '2.', 3: '3.', 4: '4.', 5: 'letzten' };
+    let summary = '';
+    if (data.recurrence_type === 'monthly') {
+        summary = data.recurrence_interval > 1
+            ? `Alle ${data.recurrence_interval} Monate am ${data.recurrence_day_of_month || 1}.`
+            : `Monatlich am ${data.recurrence_day_of_month || 1}.`;
+    } else if (data.recurrence_type === 'monthly_weekday') {
+        const week = weekLabels[data.recurrence_week_of_month || 1] || '1.';
+        const weekday = recurrenceWeekdayLabels[(data.recurrence_weekday || 1) - 1] || recurrenceWeekdayLabels[0];
+        summary = data.recurrence_interval > 1
+            ? `Alle ${data.recurrence_interval} Monate am ${week} ${weekday}`
+            : `Jeden ${week} ${weekday}`;
+    } else if (data.recurrence_type === 'yearly') {
+        const month = recurrenceMonthLabels[(data.recurrence_month_of_year || 1) - 1] || recurrenceMonthLabels[0];
+        summary = data.recurrence_interval > 1
+            ? `Alle ${data.recurrence_interval} Jahre am ${data.recurrence_day_of_month || 1}. ${month}`
+            : `Jährlich am ${data.recurrence_day_of_month || 1}. ${month}`;
+    } else {
+        summary = `Alle ${data.interval_days || 180} Tage`;
+    }
+    if (data.season_start_month && data.season_end_month) {
+        summary += ` · Saison ${recurrenceMonthLabels[data.season_start_month - 1]}-${recurrenceMonthLabels[data.season_end_month - 1]}`;
+    }
+    if (data.shift_to_workday) {
+        summary += ' · auf Werktag verschieben';
+    }
+    if (data.escalation_after_days > 0) {
+        summary += ` · Eskalation nach ${data.escalation_after_days} Tagen`;
+    }
+    return summary;
+}
+
+function refreshPlanRecurrencePreview() {
+    const preview = document.getElementById('plan-recurrence-summary-preview');
+    if (!preview) return;
+    preview.textContent = buildRecurrenceSummaryFromForm(getPlanRecurrenceFormData());
 }
 
 function renderPlanFocusState() {
@@ -1026,11 +1138,24 @@ async function submitStaffForm(event) {
 async function submitPlanForm(event) {
     event.preventDefault();
     const id = document.getElementById('plan-id').value;
+    const recurrence = getPlanRecurrenceFormData();
     const payload = {
         requesterId: appState.currentUser.id,
         asset_id: Number(document.getElementById('plan-asset').value || 0),
         title: document.getElementById('plan-title').value.trim(),
-        interval_days: Number(document.getElementById('plan-interval-days').value || 180),
+        interval_days: recurrence.interval_days,
+        recurrence_type: recurrence.recurrence_type,
+        recurrence_interval: recurrence.recurrence_type === 'interval' ? recurrence.interval_days : recurrence.recurrence_interval,
+        recurrence_day_of_month: recurrence.recurrence_type === 'yearly'
+            ? Number(document.getElementById('plan-recurrence-yearly-day').value || recurrence.recurrence_day_of_month || 1)
+            : recurrence.recurrence_day_of_month,
+        recurrence_month_of_year: recurrence.recurrence_month_of_year,
+        recurrence_week_of_month: recurrence.recurrence_week_of_month,
+        recurrence_weekday: recurrence.recurrence_weekday,
+        season_start_month: recurrence.season_start_month,
+        season_end_month: recurrence.season_end_month,
+        shift_to_workday: recurrence.shift_to_workday,
+        escalation_after_days: recurrence.escalation_after_days,
         next_due_date: document.getElementById('plan-next-due-date').value,
         last_completed_at: document.getElementById('plan-last-completed-at').value,
         last_completion_note: document.getElementById('plan-completion-note').value.trim(),
@@ -1135,6 +1260,17 @@ function resetPlanForm() {
     fillAssetSelect();
     fillStaffSelects();
     document.getElementById('plan-interval-days').value = 180;
+    document.getElementById('plan-recurrence-type').value = 'interval';
+    document.getElementById('plan-recurrence-interval').value = 180;
+    document.getElementById('plan-recurrence-day-of-month').value = 1;
+    document.getElementById('plan-recurrence-week-of-month').value = 1;
+    document.getElementById('plan-recurrence-weekday').value = 1;
+    document.getElementById('plan-recurrence-yearly-day').value = 1;
+    document.getElementById('plan-recurrence-month-of-year').value = 1;
+    document.getElementById('plan-season-start-month').value = '';
+    document.getElementById('plan-season-end-month').value = '';
+    document.getElementById('plan-shift-to-workday').checked = false;
+    document.getElementById('plan-escalation-after-days').value = 0;
     document.getElementById('plan-priority').value = 'normal';
     document.getElementById('plan-active').checked = true;
     document.getElementById('plan-requires-photo').checked = false;
@@ -1143,6 +1279,7 @@ function resetPlanForm() {
     renderChecklistEditor('plan');
     renderCompletionPhotoPreview();
     clearPlanSignature();
+    updatePlanRecurrenceUi();
     renderPlanFocusState();
     applyPlanFormPermissions();
 }
@@ -1236,6 +1373,19 @@ function editPlan(id) {
     document.getElementById('plan-asset').value = plan.asset_id || '';
     document.getElementById('plan-title').value = plan.title || '';
     document.getElementById('plan-interval-days').value = plan.interval_days || 180;
+    document.getElementById('plan-recurrence-type').value = plan.recurrence_type || 'interval';
+    document.getElementById('plan-recurrence-interval').value = plan.recurrence_type === 'interval'
+        ? (plan.interval_days || 180)
+        : (plan.recurrence_interval || 1);
+    document.getElementById('plan-recurrence-day-of-month').value = plan.recurrence_day_of_month || 1;
+    document.getElementById('plan-recurrence-week-of-month').value = plan.recurrence_week_of_month || 1;
+    document.getElementById('plan-recurrence-weekday').value = plan.recurrence_weekday || 1;
+    document.getElementById('plan-recurrence-yearly-day').value = plan.recurrence_day_of_month || 1;
+    document.getElementById('plan-recurrence-month-of-year').value = plan.recurrence_month_of_year || 1;
+    document.getElementById('plan-season-start-month').value = plan.season_start_month || '';
+    document.getElementById('plan-season-end-month').value = plan.season_end_month || '';
+    document.getElementById('plan-shift-to-workday').checked = !!plan.shift_to_workday;
+    document.getElementById('plan-escalation-after-days').value = plan.escalation_after_days || 0;
     document.getElementById('plan-next-due-date').value = plan.next_due_date || '';
     document.getElementById('plan-last-completed-at').value = plan.last_completed_at || '';
     document.getElementById('plan-completion-note').value = plan.last_completion_note || '';
@@ -1252,6 +1402,7 @@ function editPlan(id) {
     document.getElementById('plan-completion-photos').value = '';
     renderCompletionPhotoPreview();
     clearPlanSignature();
+    updatePlanRecurrenceUi();
     renderPlanFocusState();
     applyPlanFormPermissions();
     loadPlanCompletionHistory(plan.id);
@@ -1421,7 +1572,13 @@ function hydratePlanFromAsset() {
     if (!Number(intervalInput.value || 0) || Number(intervalInput.value || 0) === 180) {
         intervalInput.value = asset.template_default_interval_days || 180;
     }
+    const recurrenceType = document.getElementById('plan-recurrence-type');
+    const recurrenceInterval = document.getElementById('plan-recurrence-interval');
+    if (recurrenceType.value === 'interval') {
+        recurrenceInterval.value = intervalInput.value || asset.template_default_interval_days || 180;
+    }
     appState.completionChecklistState = getCompletionChecklistItems(checklistInput.value).map((label) => ({ label, checked: false }));
+    updatePlanRecurrenceUi();
     renderCompletionChecklist(appState.plans.find((item) => Number(item.id) === Number(appState.openedPlanId)) || { completion_checklist: checklistInput.value });
 }
 
@@ -1554,6 +1711,7 @@ function getFilteredCalendarPlans() {
         plan.staff_name,
         plan.responsible,
         plan.priority,
+        plan.recurrence_summary,
         plan.instructions,
         plan.last_completion_note
     ], appState.filters.calendar));
@@ -1569,6 +1727,10 @@ function getPlanDueState(plan) {
     dueDate.setHours(0, 0, 0, 0);
 
     if (dueDate < today) {
+        const overdueDays = Math.floor((today.getTime() - dueDate.getTime()) / (24 * 60 * 60 * 1000));
+        if (Number(plan.escalation_after_days || 0) > 0 && overdueDays >= Number(plan.escalation_after_days || 0)) {
+            return 'escalated';
+        }
         return 'overdue';
     }
 
@@ -1859,6 +2021,7 @@ function getPlanSignatureDataUrl() {
 
 function getPlanDueRank(plan) {
     const state = getPlanDueState(plan);
+    if (state === 'escalated') return -1;
     if (state === 'overdue') return 0;
     if (state === 'due-soon') return 1;
     return 2;

@@ -588,6 +588,201 @@ function addDaysIso(baseDate, days) {
     return next.toISOString().slice(0, 10);
 }
 
+function parseIsoDate(value) {
+    const normalized = normalizeMaintenanceDate(value);
+    if (!normalized) return null;
+    const date = new Date(`${normalized}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return null;
+    date.setHours(0, 0, 0, 0);
+    return date;
+}
+
+function toIsoDate(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    return date.toISOString().slice(0, 10);
+}
+
+function clampInt(value, min, max, fallback) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    const rounded = Math.round(parsed);
+    return Math.min(max, Math.max(min, rounded));
+}
+
+function normalizeRecurrenceType(value) {
+    const allowed = new Set(['interval', 'monthly', 'monthly_weekday', 'yearly']);
+    const normalized = String(value || '').trim().toLowerCase();
+    return allowed.has(normalized) ? normalized : 'interval';
+}
+
+function normalizeRecurrenceConfig(source = {}) {
+    const recurrenceType = normalizeRecurrenceType(source.recurrence_type);
+    const intervalDays = clampInt(source.interval_days, 1, 3660, 180);
+    const recurrenceInterval = clampInt(
+        source.recurrence_interval,
+        1,
+        recurrenceType === 'interval' ? 3660 : 60,
+        recurrenceType === 'interval' ? intervalDays : 1
+    );
+    return {
+        recurrence_type: recurrenceType,
+        interval_days: intervalDays,
+        recurrence_interval: recurrenceInterval,
+        recurrence_day_of_month: clampInt(source.recurrence_day_of_month, 1, 31, null),
+        recurrence_month_of_year: clampInt(source.recurrence_month_of_year, 1, 12, null),
+        recurrence_week_of_month: clampInt(source.recurrence_week_of_month, 1, 5, null),
+        recurrence_weekday: clampInt(source.recurrence_weekday, 1, 7, null),
+        season_start_month: clampInt(source.season_start_month, 1, 12, null),
+        season_end_month: clampInt(source.season_end_month, 1, 12, null),
+        shift_to_workday: source.shift_to_workday ? 1 : 0,
+        escalation_after_days: clampInt(source.escalation_after_days, 0, 3650, 0)
+    };
+}
+
+function shiftDateToWorkday(date) {
+    const shifted = new Date(date);
+    shifted.setHours(0, 0, 0, 0);
+    while (shifted.getDay() === 0 || shifted.getDay() === 6) {
+        shifted.setDate(shifted.getDate() + 1);
+    }
+    return shifted;
+}
+
+function getDaysInMonth(year, monthIndex) {
+    return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+function buildDateWithDay(year, monthIndex, dayOfMonth) {
+    const day = Math.min(Math.max(1, Number(dayOfMonth || 1)), getDaysInMonth(year, monthIndex));
+    return new Date(year, monthIndex, day);
+}
+
+function addMonthsPreservingDay(date, months, dayOfMonth) {
+    const base = new Date(date);
+    base.setHours(0, 0, 0, 0);
+    const targetMonthIndex = base.getMonth() + Number(months || 0);
+    const year = base.getFullYear() + Math.floor(targetMonthIndex / 12);
+    const monthIndex = ((targetMonthIndex % 12) + 12) % 12;
+    return buildDateWithDay(year, monthIndex, dayOfMonth || base.getDate());
+}
+
+function getNthWeekdayOfMonth(year, monthIndex, weekOfMonth, weekday) {
+    const jsWeekday = Math.min(6, Math.max(0, Number(weekday || 1) - 1));
+    const desiredWeek = Math.min(5, Math.max(1, Number(weekOfMonth || 1)));
+    const firstDay = new Date(year, monthIndex, 1);
+    const firstWeekdayOffset = (jsWeekday - firstDay.getDay() + 7) % 7;
+    let day = 1 + firstWeekdayOffset + (desiredWeek - 1) * 7;
+    const lastDay = getDaysInMonth(year, monthIndex);
+    if (desiredWeek === 5 || day > lastDay) {
+        const lastDate = new Date(year, monthIndex, lastDay);
+        const backwardOffset = (lastDate.getDay() - jsWeekday + 7) % 7;
+        day = lastDay - backwardOffset;
+    }
+    return new Date(year, monthIndex, day);
+}
+
+function isMonthInsideSeason(month, startMonth, endMonth) {
+    if (!startMonth || !endMonth) return true;
+    if (startMonth <= endMonth) {
+        return month >= startMonth && month <= endMonth;
+    }
+    return month >= startMonth || month <= endMonth;
+}
+
+function applySeasonWindow(date, config) {
+    const startMonth = Number(config.season_start_month || 0);
+    const endMonth = Number(config.season_end_month || 0);
+    if (!startMonth || !endMonth) return date;
+    const currentMonth = date.getMonth() + 1;
+    if (isMonthInsideSeason(currentMonth, startMonth, endMonth)) return date;
+
+    const targetYear = currentMonth < startMonth ? date.getFullYear() : date.getFullYear() + 1;
+    const targetMonthIndex = startMonth - 1;
+    if (config.recurrence_type === 'monthly_weekday') {
+        return getNthWeekdayOfMonth(
+            targetYear,
+            targetMonthIndex,
+            config.recurrence_week_of_month || 1,
+            config.recurrence_weekday || 1
+        );
+    }
+    const preferredDay = config.recurrence_day_of_month || date.getDate();
+    return buildDateWithDay(targetYear, targetMonthIndex, preferredDay);
+}
+
+function computeNextDueFromPlan(planLike, referenceDate) {
+    const config = normalizeRecurrenceConfig(planLike);
+    const baseDate = parseIsoDate(referenceDate) || parseIsoDate(planLike.next_due_date) || new Date();
+    let candidate = new Date(baseDate);
+    candidate.setHours(0, 0, 0, 0);
+
+    if (config.recurrence_type === 'monthly') {
+        const preferredDay = config.recurrence_day_of_month || candidate.getDate();
+        candidate = addMonthsPreservingDay(candidate, config.recurrence_interval, preferredDay);
+    } else if (config.recurrence_type === 'monthly_weekday') {
+        const interim = addMonthsPreservingDay(candidate, config.recurrence_interval, 1);
+        candidate = getNthWeekdayOfMonth(
+            interim.getFullYear(),
+            interim.getMonth(),
+            config.recurrence_week_of_month || 1,
+            config.recurrence_weekday || 1
+        );
+    } else if (config.recurrence_type === 'yearly') {
+        const monthOfYear = config.recurrence_month_of_year || (candidate.getMonth() + 1);
+        const dayOfMonth = config.recurrence_day_of_month || candidate.getDate();
+        candidate = buildDateWithDay(
+            candidate.getFullYear() + config.recurrence_interval,
+            monthOfYear - 1,
+            dayOfMonth
+        );
+    } else {
+        candidate.setDate(candidate.getDate() + config.interval_days);
+    }
+
+    candidate = applySeasonWindow(candidate, config);
+    if (config.shift_to_workday) {
+        candidate = shiftDateToWorkday(candidate);
+    }
+    return toIsoDate(candidate);
+}
+
+function buildRecurrenceSummary(planLike) {
+    const config = normalizeRecurrenceConfig(planLike);
+    const monthNames = ['Jan', 'Feb', 'Mrz', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+    const weekdays = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
+    const weekLabels = { 1: '1.', 2: '2.', 3: '3.', 4: '4.', 5: 'letzten' };
+    let text = '';
+    if (config.recurrence_type === 'monthly') {
+        text = `Monatlich am ${config.recurrence_day_of_month || 1}.`;
+        if (config.recurrence_interval > 1) text = `Alle ${config.recurrence_interval} Monate am ${config.recurrence_day_of_month || 1}.`;
+    } else if (config.recurrence_type === 'monthly_weekday') {
+        const weekLabel = weekLabels[config.recurrence_week_of_month || 1] || '1.';
+        const weekday = weekdays[(config.recurrence_weekday || 1) - 1] || weekdays[0];
+        text = `Jeden ${weekLabel} ${weekday}`;
+        if (config.recurrence_interval > 1) text = `Alle ${config.recurrence_interval} Monate am ${weekLabel} ${weekday}`;
+    } else if (config.recurrence_type === 'yearly') {
+        const month = monthNames[(config.recurrence_month_of_year || 1) - 1] || monthNames[0];
+        text = `Jährlich am ${config.recurrence_day_of_month || 1}. ${month}`;
+        if (config.recurrence_interval > 1) text = `Alle ${config.recurrence_interval} Jahre am ${config.recurrence_day_of_month || 1}. ${month}`;
+    } else {
+        text = `Alle ${config.interval_days} Tage`;
+    }
+    if (config.season_start_month && config.season_end_month) {
+        text += ` · Saison ${monthNames[config.season_start_month - 1]}-${monthNames[config.season_end_month - 1]}`;
+    }
+    if (config.shift_to_workday) {
+        text += ' · auf Werktag verschieben';
+    }
+    return text;
+}
+
+function getOverdueDays(planLike, todayIso = getLocalIsoDate()) {
+    const dueDate = parseIsoDate(planLike?.next_due_date);
+    const todayDate = parseIsoDate(todayIso);
+    if (!dueDate || !todayDate || dueDate >= todayDate) return 0;
+    return Math.floor((todayDate.getTime() - dueDate.getTime()) / (24 * 60 * 60 * 1000));
+}
+
 function createMailTransporter() {
     if (!smtpHost || !smtpPort || !maintenanceMailEnabled) return null;
     const transportConfig = {
@@ -839,6 +1034,16 @@ db.exec(`
         asset_id INTEGER NOT NULL,
         title TEXT NOT NULL,
         interval_days INTEGER DEFAULT 180,
+        recurrence_type TEXT DEFAULT 'interval',
+        recurrence_interval INTEGER DEFAULT 180,
+        recurrence_day_of_month INTEGER,
+        recurrence_month_of_year INTEGER,
+        recurrence_week_of_month INTEGER,
+        recurrence_weekday INTEGER,
+        season_start_month INTEGER,
+        season_end_month INTEGER,
+        shift_to_workday INTEGER DEFAULT 0,
+        escalation_after_days INTEGER DEFAULT 0,
         next_due_date TEXT DEFAULT '',
         last_completed_at TEXT DEFAULT '',
         last_completion_note TEXT DEFAULT '',
@@ -877,6 +1082,15 @@ db.exec(`
         FOREIGN KEY(completion_id) REFERENCES maintenance_plan_completions(id)
     );
     CREATE TABLE IF NOT EXISTS maintenance_email_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER NOT NULL,
+        due_date TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        recipient_email TEXT NOT NULL,
+        sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(plan_id, due_date, user_id)
+    );
+    CREATE TABLE IF NOT EXISTS maintenance_escalation_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         plan_id INTEGER NOT NULL,
         due_date TEXT NOT NULL,
@@ -938,6 +1152,46 @@ try {
     if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'responsible_staff_id')) {
         db.prepare("ALTER TABLE maintenance_plans ADD COLUMN responsible_staff_id INTEGER").run();
         console.log("Migration: Added responsible_staff_id to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'recurrence_type')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN recurrence_type TEXT DEFAULT 'interval'").run();
+        console.log("Migration: Added recurrence_type to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'recurrence_interval')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN recurrence_interval INTEGER DEFAULT 180").run();
+        console.log("Migration: Added recurrence_interval to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'recurrence_day_of_month')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN recurrence_day_of_month INTEGER").run();
+        console.log("Migration: Added recurrence_day_of_month to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'recurrence_month_of_year')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN recurrence_month_of_year INTEGER").run();
+        console.log("Migration: Added recurrence_month_of_year to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'recurrence_week_of_month')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN recurrence_week_of_month INTEGER").run();
+        console.log("Migration: Added recurrence_week_of_month to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'recurrence_weekday')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN recurrence_weekday INTEGER").run();
+        console.log("Migration: Added recurrence_weekday to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'season_start_month')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN season_start_month INTEGER").run();
+        console.log("Migration: Added season_start_month to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'season_end_month')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN season_end_month INTEGER").run();
+        console.log("Migration: Added season_end_month to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'shift_to_workday')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN shift_to_workday INTEGER DEFAULT 0").run();
+        console.log("Migration: Added shift_to_workday to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'escalation_after_days')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN escalation_after_days INTEGER DEFAULT 0").run();
+        console.log("Migration: Added escalation_after_days to maintenance_plans");
     }
     
     const msgCols = db.prepare("PRAGMA table_info(messages)").all();
@@ -2565,7 +2819,17 @@ function listMaintenancePlans() {
             t.description AS template_description,
             t.checklist AS template_checklist,
             t.default_interval_days AS template_default_interval_days,
-            ms.name AS staff_name
+            ms.name AS staff_name,
+            mp.recurrence_type,
+            mp.recurrence_interval,
+            mp.recurrence_day_of_month,
+            mp.recurrence_month_of_year,
+            mp.recurrence_week_of_month,
+            mp.recurrence_weekday,
+            mp.season_start_month,
+            mp.season_end_month,
+            mp.shift_to_workday,
+            mp.escalation_after_days
         FROM maintenance_plans mp
         JOIN maintenance_assets ma ON ma.id = mp.asset_id
         JOIN maintenance_buildings b ON b.id = ma.building_id
@@ -2581,7 +2845,18 @@ function listMaintenancePlans() {
         active: Number(row.active || 0) === 1,
         interval_days: Number(row.interval_days || 0),
         completion_requires_photo: Number(row.completion_requires_photo || 0) === 1,
-        responsible_staff_id: row.responsible_staff_id ? Number(row.responsible_staff_id) : null
+        responsible_staff_id: row.responsible_staff_id ? Number(row.responsible_staff_id) : null,
+        recurrence_type: normalizeRecurrenceType(row.recurrence_type),
+        recurrence_interval: Number(row.recurrence_interval || row.interval_days || 1),
+        recurrence_day_of_month: row.recurrence_day_of_month ? Number(row.recurrence_day_of_month) : null,
+        recurrence_month_of_year: row.recurrence_month_of_year ? Number(row.recurrence_month_of_year) : null,
+        recurrence_week_of_month: row.recurrence_week_of_month ? Number(row.recurrence_week_of_month) : null,
+        recurrence_weekday: row.recurrence_weekday ? Number(row.recurrence_weekday) : null,
+        season_start_month: row.season_start_month ? Number(row.season_start_month) : null,
+        season_end_month: row.season_end_month ? Number(row.season_end_month) : null,
+        shift_to_workday: Number(row.shift_to_workday || 0) === 1,
+        escalation_after_days: Number(row.escalation_after_days || 0),
+        recurrence_summary: buildRecurrenceSummary(row)
     }));
     const templateIds = [...new Set(plans.map((plan) => Number(plan.template_id)).filter(Boolean))];
     const fileMap = new Map();
@@ -2732,7 +3007,8 @@ function getMaintenanceSummary() {
         assets: Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_assets').get() || {}).count || 0),
         activePlans: Number((db.prepare('SELECT COUNT(*) AS count FROM maintenance_plans WHERE active = 1').get() || {}).count || 0),
         overduePlans: Number((db.prepare("SELECT COUNT(*) AS count FROM maintenance_plans WHERE active = 1 AND COALESCE(next_due_date, '') <> '' AND next_due_date < ?").get(today) || {}).count || 0),
-        dueSoonPlans: Number((db.prepare("SELECT COUNT(*) AS count FROM maintenance_plans WHERE active = 1 AND COALESCE(next_due_date, '') <> '' AND next_due_date >= ? AND next_due_date <= ?").get(today, soon) || {}).count || 0)
+        dueSoonPlans: Number((db.prepare("SELECT COUNT(*) AS count FROM maintenance_plans WHERE active = 1 AND COALESCE(next_due_date, '') <> '' AND next_due_date >= ? AND next_due_date <= ?").get(today, soon) || {}).count || 0),
+        escalatedPlans: Number((db.prepare("SELECT COUNT(*) AS count FROM maintenance_plans WHERE active = 1 AND COALESCE(next_due_date, '') <> '' AND next_due_date < ? AND COALESCE(escalation_after_days, 0) > 0 AND CAST((julianday(?) - julianday(next_due_date)) AS INTEGER) >= escalation_after_days").get(today, today) || {}).count || 0)
     };
 }
 
@@ -2763,6 +3039,16 @@ function loadDueMaintenancePlans(todayIso) {
             mp.id,
             mp.title,
             mp.interval_days,
+            mp.recurrence_type,
+            mp.recurrence_interval,
+            mp.recurrence_day_of_month,
+            mp.recurrence_month_of_year,
+            mp.recurrence_week_of_month,
+            mp.recurrence_weekday,
+            mp.season_start_month,
+            mp.season_end_month,
+            mp.shift_to_workday,
+            mp.escalation_after_days,
             mp.next_due_date,
             mp.last_completed_at,
             mp.responsible,
@@ -2785,7 +3071,12 @@ function loadDueMaintenancePlans(todayIso) {
           AND COALESCE(mp.next_due_date, '') <> ''
           AND mp.next_due_date <= ?
         ORDER BY mp.next_due_date ASC, mp.priority DESC, mp.title COLLATE NOCASE ASC
-    `).all(todayIso);
+    `).all(todayIso).map((plan) => ({
+        ...plan,
+        recurrence_summary: buildRecurrenceSummary(plan),
+        overdue_days: getOverdueDays(plan, todayIso),
+        escalation_after_days: Number(plan.escalation_after_days || 0)
+    }));
 }
 
 function loadMaintenanceMailRecipients() {
@@ -2800,7 +3091,10 @@ function loadMaintenanceMailRecipients() {
 
 function loadNextMaintenancePlan() {
     return db.prepare(`
-        SELECT mp.id, mp.title, mp.interval_days, mp.next_due_date, mp.last_completed_at, mp.responsible, mp.priority, mp.instructions, mp.active,
+        SELECT mp.id, mp.title, mp.interval_days, mp.recurrence_type, mp.recurrence_interval, mp.recurrence_day_of_month,
+               mp.recurrence_month_of_year, mp.recurrence_week_of_month, mp.recurrence_weekday,
+               mp.season_start_month, mp.season_end_month, mp.shift_to_workday, mp.escalation_after_days,
+               mp.next_due_date, mp.last_completed_at, mp.responsible, mp.priority, mp.instructions, mp.active,
                ma.name AS asset_name, ma.location AS asset_location, ma.serial_number,
                mb.name AS building_name,
                ap.name AS apartment_name,
@@ -2816,13 +3110,18 @@ function loadNextMaintenancePlan() {
     `).get() || null;
 }
 
-function buildMaintenanceMail(plan, recipient) {
+function buildMaintenanceMail(plan, recipient, options = {}) {
     const link = buildMaintenancePlanLink(plan.id);
-    const subject = `DR-MAINTENANCE BOARD: Wartung fällig - ${plan.title}`;
+    const escalated = !!options.escalated;
+    const subject = escalated
+        ? `DR-MAINTENANCE BOARD: Eskalation - ${plan.title}`
+        : `DR-MAINTENANCE BOARD: Wartung fällig - ${plan.title}`;
     const lines = [
         `Hallo ${recipient.display_name || recipient.username},`,
         '',
-        'eine Wartung ist fällig.',
+        escalated
+            ? 'eine Wartung ist weiterhin überfällig und wurde eskaliert.'
+            : 'eine Wartung ist fällig.',
         '',
         `Titel: ${plan.title}`,
         `Gebäude: ${plan.building_name || '-'}`,
@@ -2832,13 +3131,16 @@ function buildMaintenanceMail(plan, recipient) {
         `Termin: ${plan.next_due_date || '-'}`,
         `Verantwortlich: ${plan.responsible || '-'}`,
         `Priorität: ${plan.priority || '-'}`,
-        `Intervall: ${plan.interval_days || 0} Tage`,
+        `Regel: ${plan.recurrence_summary || buildRecurrenceSummary(plan)}`,
         `Ort: ${plan.asset_location || '-'}`,
         `Seriennummer: ${plan.serial_number || '-'}`,
         `Zuletzt erledigt: ${plan.last_completed_at || '-'}`,
         `Anweisung: ${plan.instructions || '-'}`,
         ''
     ];
+    if (escalated) {
+        lines.splice(10, 0, `Überfällig seit: ${plan.overdue_days || getOverdueDays(plan)} Tag(en)`);
+    }
     if (link) {
         lines.push(`Direkt zur Wartung: ${link}`);
         lines.push('');
@@ -2850,7 +3152,7 @@ function buildMaintenanceMail(plan, recipient) {
         <div style="font-family:Arial,sans-serif;color:#111;line-height:1.5">
             <h2 style="margin:0 0 14px">DR-MAINTENANCE BOARD</h2>
             <p>Hallo ${escapeHtmlForMail(recipient.display_name || recipient.username)},</p>
-            <p>eine Wartung ist fällig.</p>
+            <p>${escalated ? 'eine Wartung ist weiterhin überfällig und wurde eskaliert.' : 'eine Wartung ist fällig.'}</p>
             <table style="border-collapse:collapse;width:100%;max-width:720px">
                 <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Titel</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.title)}</td></tr>
                 <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Gebäude</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.building_name || '-')}</td></tr>
@@ -2860,7 +3162,8 @@ function buildMaintenanceMail(plan, recipient) {
                 <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Termin</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.next_due_date || '-')}</td></tr>
                 <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Verantwortlich</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.responsible || '-')}</td></tr>
                 <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Priorität</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.priority || '-')}</td></tr>
-                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Intervall</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(`${plan.interval_days || 0} Tage`)}</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Regel</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.recurrence_summary || buildRecurrenceSummary(plan))}</td></tr>
+                ${escalated ? `<tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Überfällig seit</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(`${plan.overdue_days || getOverdueDays(plan)} Tag(en)`)}</td></tr>` : ''}
                 <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Ort</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.asset_location || '-')}</td></tr>
                 <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Seriennummer</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.serial_number || '-')}</td></tr>
                 <tr><td style="padding:6px 10px;border:1px solid #ddd"><strong>Zuletzt erledigt</strong></td><td style="padding:6px 10px;border:1px solid #ddd">${escapeHtmlForMail(plan.last_completed_at || '-')}</td></tr>
@@ -2958,6 +3261,38 @@ async function sendDueMaintenanceEmails() {
                     recipient: recipient.email,
                     message: error.message || String(error)
                 });
+            }
+        }
+
+        if (Number(plan.escalation_after_days || 0) > 0 && Number(plan.overdue_days || 0) >= Number(plan.escalation_after_days || 0)) {
+            for (const recipient of recipients) {
+                const alreadyEscalated = db.prepare(`
+                    SELECT id
+                    FROM maintenance_escalation_log
+                    WHERE plan_id = ? AND due_date = ? AND user_id = ?
+                `).get(plan.id, plan.next_due_date, recipient.id);
+                if (alreadyEscalated) continue;
+
+                const escalationMessage = buildMaintenanceMail(plan, recipient, { escalated: true });
+                try {
+                    await mailTransporter.sendMail({
+                        from: smtpFrom,
+                        to: recipient.email,
+                        subject: escalationMessage.subject,
+                        text: escalationMessage.text,
+                        html: escalationMessage.html
+                    });
+                    db.prepare(`
+                        INSERT INTO maintenance_escalation_log (plan_id, due_date, user_id, recipient_email)
+                        VALUES (?, ?, ?, ?)
+                    `).run(plan.id, plan.next_due_date, recipient.id, recipient.email);
+                } catch (error) {
+                    console.error('Maintenance escalation mail send failed', {
+                        planId: plan.id,
+                        recipient: recipient.email,
+                        message: error.message || String(error)
+                    });
+                }
             }
         }
     }
@@ -3492,8 +3827,10 @@ app.post('/api/maintenance/plans', (req, res) => {
     const assetId = Number(req.body?.asset_id);
     const responsibleStaffId = Number(req.body?.responsible_staff_id || 0);
     const title = String(req.body?.title || '').trim();
-    const intervalDays = Math.max(1, Number(req.body?.interval_days || 180));
-    const nextDueDate = normalizeMaintenanceDate(req.body?.next_due_date) || addDaysIso(new Date().toISOString().slice(0, 10), intervalDays);
+    const recurrence = normalizeRecurrenceConfig(req.body || {});
+    const intervalDays = recurrence.interval_days;
+    const nextDueDate = normalizeMaintenanceDate(req.body?.next_due_date)
+        || computeNextDueFromPlan({ ...recurrence, next_due_date: new Date().toISOString().slice(0, 10) }, new Date().toISOString().slice(0, 10));
     if (!assetId || !db.prepare('SELECT id FROM maintenance_assets WHERE id = ?').get(assetId)) {
         return res.status(400).json({ success: false, message: 'Wartungsobjekt fehlt' });
     }
@@ -3503,12 +3840,22 @@ app.post('/api/maintenance/plans', (req, res) => {
     if (!title) return res.status(400).json({ success: false, message: 'Titel fehlt' });
 
     const result = db.prepare(`
-        INSERT INTO maintenance_plans (asset_id, title, interval_days, next_due_date, last_completed_at, last_completion_note, completion_checklist, completion_requires_photo, responsible_staff_id, responsible, priority, instructions, active, created_by, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO maintenance_plans (asset_id, title, interval_days, recurrence_type, recurrence_interval, recurrence_day_of_month, recurrence_month_of_year, recurrence_week_of_month, recurrence_weekday, season_start_month, season_end_month, shift_to_workday, escalation_after_days, next_due_date, last_completed_at, last_completion_note, completion_checklist, completion_requires_photo, responsible_staff_id, responsible, priority, instructions, active, created_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `).run(
         assetId,
         title,
         intervalDays,
+        recurrence.recurrence_type,
+        recurrence.recurrence_interval,
+        recurrence.recurrence_day_of_month,
+        recurrence.recurrence_month_of_year,
+        recurrence.recurrence_week_of_month,
+        recurrence.recurrence_weekday,
+        recurrence.season_start_month,
+        recurrence.season_end_month,
+        recurrence.shift_to_workday,
+        recurrence.escalation_after_days,
         nextDueDate,
         normalizeMaintenanceDate(req.body?.last_completed_at),
         String(req.body?.last_completion_note || '').trim(),
@@ -3533,7 +3880,10 @@ app.put('/api/maintenance/plans/:id', (req, res) => {
     const assetId = Number(req.body?.asset_id);
     const responsibleStaffId = Number(req.body?.responsible_staff_id || 0);
     const title = String(req.body?.title || '').trim();
-    const intervalDays = Math.max(1, Number(req.body?.interval_days || 180));
+    const recurrence = normalizeRecurrenceConfig(req.body || {});
+    const intervalDays = recurrence.interval_days;
+    const requestedNextDueDate = normalizeMaintenanceDate(req.body?.next_due_date)
+        || computeNextDueFromPlan({ ...recurrence, next_due_date: normalizeMaintenanceDate(req.body?.last_completed_at) || new Date().toISOString().slice(0, 10) }, normalizeMaintenanceDate(req.body?.last_completed_at) || new Date().toISOString().slice(0, 10));
     if (!db.prepare('SELECT id FROM maintenance_plans WHERE id = ?').get(id)) {
         return res.status(404).json({ success: false, message: 'Wartungsplan nicht gefunden' });
     }
@@ -3547,13 +3897,23 @@ app.put('/api/maintenance/plans/:id', (req, res) => {
 
     db.prepare(`
         UPDATE maintenance_plans
-        SET asset_id = ?, title = ?, interval_days = ?, next_due_date = ?, last_completed_at = ?, last_completion_note = ?, completion_checklist = ?, completion_requires_photo = ?, responsible_staff_id = ?, responsible = ?, priority = ?, instructions = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+        SET asset_id = ?, title = ?, interval_days = ?, recurrence_type = ?, recurrence_interval = ?, recurrence_day_of_month = ?, recurrence_month_of_year = ?, recurrence_week_of_month = ?, recurrence_weekday = ?, season_start_month = ?, season_end_month = ?, shift_to_workday = ?, escalation_after_days = ?, next_due_date = ?, last_completed_at = ?, last_completion_note = ?, completion_checklist = ?, completion_requires_photo = ?, responsible_staff_id = ?, responsible = ?, priority = ?, instructions = ?, active = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
     `).run(
         assetId,
         title,
         intervalDays,
-        normalizeMaintenanceDate(req.body?.next_due_date),
+        recurrence.recurrence_type,
+        recurrence.recurrence_interval,
+        recurrence.recurrence_day_of_month,
+        recurrence.recurrence_month_of_year,
+        recurrence.recurrence_week_of_month,
+        recurrence.recurrence_weekday,
+        recurrence.season_start_month,
+        recurrence.season_end_month,
+        recurrence.shift_to_workday,
+        recurrence.escalation_after_days,
+        requestedNextDueDate,
         normalizeMaintenanceDate(req.body?.last_completed_at),
         String(req.body?.last_completion_note || '').trim(),
         String(req.body?.completion_checklist || '').trim(),
@@ -3574,11 +3934,17 @@ app.post('/api/maintenance/plans/:id/complete', upload.array('photos', 12), (req
     if (!requester) return;
 
     const id = Number(req.params.id);
-    const plan = db.prepare('SELECT id, interval_days, completion_checklist, completion_requires_photo FROM maintenance_plans WHERE id = ?').get(id);
+    const plan = db.prepare(`
+        SELECT id, interval_days, recurrence_type, recurrence_interval, recurrence_day_of_month, recurrence_month_of_year,
+               recurrence_week_of_month, recurrence_weekday, season_start_month, season_end_month, shift_to_workday,
+               escalation_after_days, next_due_date, completion_checklist, completion_requires_photo
+        FROM maintenance_plans
+        WHERE id = ?
+    `).get(id);
     if (!plan) return res.status(404).json({ success: false, message: 'Wartungsplan nicht gefunden' });
 
     const completedAt = normalizeMaintenanceDate(req.body?.completed_at) || new Date().toISOString().slice(0, 10);
-    const nextDueDate = addDaysIso(completedAt, Number(plan.interval_days || 0));
+    const nextDueDate = computeNextDueFromPlan(plan, completedAt);
     const completionNote = String(req.body?.completion_note || '').trim();
     const checklistStateRaw = String(req.body?.checklist_state || '[]').trim() || '[]';
     let checklistState = [];

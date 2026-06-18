@@ -193,7 +193,7 @@ textarea {
 
 .summary-grid {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 14px;
     margin-bottom: 18px;
 }
@@ -269,6 +269,12 @@ textarea {
     gap: 6px;
     font-size: 0.92rem;
     color: var(--muted);
+}
+
+.inline-grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
 }
 
 .stack-form input,
@@ -754,6 +760,12 @@ th {
     color: #b91c1c;
 }
 
+.calendar-event-card.escalated {
+    background: #7f1d1d;
+    border-color: #ef4444;
+    color: #fff;
+}
+
 .calendar-empty {
     padding: 26px;
     text-align: center;
@@ -937,6 +949,10 @@ th {
     .calendar-day-view,
     .calendar-week-view {
         grid-template-columns: 92px minmax(0, 1fr);
+    }
+
+    .inline-grid-2 {
+        grid-template-columns: 1fr;
     }
 
     .completion-photo-grid {
