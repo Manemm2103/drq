@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DR-MAINTENANCE LABELS</title>
+    <link rel="stylesheet" href="maintenance.css?v=8">
+    <style>
+        body { background:#f3f4f6; }
+        .label-shell { max-width: 1200px; margin: 0 auto; padding: 24px; }
+        .label-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:16px; }
+        .label-card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px; display:flex; flex-direction:column; gap:10px; break-inside:avoid; }
+        .label-card img { width:180px; height:180px; object-fit:contain; align-self:center; background:#fff; }
+        .label-link { font-size:0.8rem; color:#475569; word-break:break-all; }
+        @media print {
+            .label-toolbar { display:none; }
+            body { background:#fff; }
+            .label-shell { max-width:none; padding:0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="label-shell">
+        <div class="surface label-toolbar">
+            <div class="surface-header">
+                <h3>QR Labels</h3>
+                <span id="label-subtitle">Wartungsobjekte werden geladen</span>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="action-btn" onclick="window.print()">Drucken</button>
+                <button type="button" class="action-btn secondary" onclick="window.close()">Schließen</button>
+            </div>
+        </div>
+        <div id="label-grid" class="label-grid"></div>
+    </div>
+    <script src="maintenance-labels.js?v=1"></script>
+</body>
+</html>

@@ -8,7 +8,10 @@ const appState = {
     assets: [],
     staff: [],
     plans: [],
+    planCompletions: [],
     openedPlanId: null,
+    completionChecklistState: [],
+    signaturePad: null,
     filters: {
         dashboard: '',
         buildings: '',
@@ -84,6 +87,9 @@ function bindForms() {
     document.getElementById('asset-template').addEventListener('change', hydrateAssetFromTemplate);
     document.getElementById('plan-asset').addEventListener('change', hydratePlanFromAsset);
     document.getElementById('calendar-plan-asset').addEventListener('change', hydrateCalendarTitleFromAsset);
+    document.getElementById('plan-completion-photos').addEventListener('change', renderCompletionPhotoPreview);
+    document.getElementById('plan-completion-checklist').addEventListener('input', refreshCompletionChecklistFromTextarea);
+    initializeSignaturePad();
 }
 
 async function bootstrapBoard() {
@@ -155,12 +161,35 @@ function renderBoard() {
 function handleMaintenanceLinkTarget() {
     const params = new URLSearchParams(window.location.search);
     const planId = Number(params.get('plan') || 0);
-    if (!planId) return;
+    const assetId = Number(params.get('asset') || 0);
+    if (planId) {
+        const plan = appState.plans.find((item) => Number(item.id) === planId);
+        if (plan) {
+            editPlan(planId);
+            return;
+        }
+    }
+    if (!assetId) return;
 
-    const plan = appState.plans.find((item) => Number(item.id) === planId);
-    if (!plan) return;
+    const candidates = appState.plans
+        .filter((item) => item.active && Number(item.asset_id) === assetId)
+        .sort((left, right) => {
+            const leftState = getPlanDueRank(left);
+            const rightState = getPlanDueRank(right);
+            if (leftState !== rightState) return leftState - rightState;
+            return compareDates(left.next_due_date, right.next_due_date);
+        });
+    if (candidates.length) {
+        editPlan(candidates[0].id);
+        showAlert('Passende offene Wartung für dieses Gerät geöffnet.', 'success');
+        return;
+    }
 
-    editPlan(planId);
+    const asset = appState.assets.find((item) => Number(item.id) === assetId);
+    if (asset) {
+        editAsset(assetId);
+        showAlert('Für dieses Gerät ist aktuell kein offener Wartungsplan vorhanden.', 'error');
+    }
 }
 
 function renderSummary() {
@@ -267,6 +296,7 @@ function renderApartments() {
             <td>
                 <div class="table-actions">
                     <button class="mini-btn" onclick="event.stopPropagation(); editApartment(${apartment.id})">Bearbeiten</button>
+                    <button class="mini-btn" onclick="event.stopPropagation(); openApartmentLabelPrint(${apartment.id})">QR Labels</button>
                     <button class="mini-btn danger" onclick="event.stopPropagation(); deleteApartment(${apartment.id})">Löschen</button>
                 </div>
             </td>
@@ -331,6 +361,7 @@ function renderAssets() {
             <td>
                 <div class="table-actions">
                     <button class="mini-btn" onclick="event.stopPropagation(); editAsset(${asset.id})">Bearbeiten</button>
+                    <button class="mini-btn" onclick="event.stopPropagation(); openAssetLabelPrint(${asset.id})">QR</button>
                     <button class="mini-btn danger" onclick="event.stopPropagation(); deleteAsset(${asset.id})">Löschen</button>
                 </div>
             </td>
@@ -426,15 +457,33 @@ function renderPlanFocusState() {
     const listSurface = document.getElementById('plans-list-surface');
     const closeBtn = document.getElementById('plan-close-btn');
     const docsPanel = document.getElementById('plan-linked-docs');
+    const workflow = document.getElementById('plan-completion-workflow');
+    const checklistPanel = document.getElementById('plan-completion-checklist-panel');
+    const requiredHint = document.getElementById('plan-photo-required-hint');
     const openedPlan = appState.plans.find((item) => Number(item.id) === Number(appState.openedPlanId));
 
     if (listSurface) listSurface.hidden = false;
     if (closeBtn) closeBtn.style.display = openedPlan ? 'inline-flex' : 'none';
 
+    if (workflow) workflow.hidden = !openedPlan;
+    if (requiredHint) {
+        requiredHint.textContent = openedPlan?.completion_requires_photo
+            ? 'Fuer diese Wartung ist mindestens ein Foto Pflicht.'
+            : 'Fotos sind optional, solange der Plan nichts anderes vorgibt.';
+    }
+    if (checklistPanel) {
+        renderCompletionChecklist(openedPlan);
+    }
+
     if (!docsPanel) return;
     if (!openedPlan) {
         docsPanel.hidden = true;
         docsPanel.innerHTML = '';
+        const historyPanel = document.getElementById('plan-completion-history');
+        if (historyPanel) {
+            historyPanel.hidden = true;
+            historyPanel.innerHTML = '';
+        }
         return;
     }
 
@@ -458,6 +507,38 @@ function renderPlanFocusState() {
     `;
 }
 
+function renderCompletionChecklist(plan) {
+    const panel = document.getElementById('plan-completion-checklist-panel');
+    if (!panel) return;
+    const items = getCompletionChecklistItems(plan?.completion_checklist || '');
+    if (!plan || !items.length) {
+        panel.hidden = true;
+        panel.innerHTML = '';
+        appState.completionChecklistState = [];
+        return;
+    }
+    const stateMap = new Map(appState.completionChecklistState.map((entry) => [String(entry.label), !!entry.checked]));
+    appState.completionChecklistState = items.map((label) => ({
+        label,
+        checked: stateMap.has(label) ? stateMap.get(label) : false
+    }));
+    panel.hidden = false;
+    panel.innerHTML = `
+        <div class="surface-header compact">
+            <h3>Checkliste</h3>
+            <span>Alles abhaken, bevor du abschließt</span>
+        </div>
+        <div class="completion-checklist">
+            ${appState.completionChecklistState.map((entry, index) => `
+                <label class="completion-check-item">
+                    <input type="checkbox" ${entry.checked ? 'checked' : ''} onchange="toggleCompletionChecklistItem(${index}, this.checked)">
+                    <span>${escapeHtml(entry.label)}</span>
+                </label>
+            `).join('')}
+        </div>
+    `;
+}
+
 function renderLinkedDocItem(file) {
     const mime = String(file.mime_type || '').toLowerCase();
     const isImage = mime.startsWith('image/');
@@ -475,6 +556,42 @@ function renderLinkedDocItem(file) {
             </div>
             <a class="action-btn secondary" href="${escapeHtml(file.url)}" target="_blank" rel="noopener noreferrer">Öffnen</a>
         </div>
+    `;
+}
+
+function renderCompletionHistory(completions) {
+    const panel = document.getElementById('plan-completion-history');
+    if (!panel) return;
+    if (!completions || !completions.length) {
+        panel.hidden = true;
+        panel.innerHTML = '';
+        return;
+    }
+    panel.hidden = false;
+    panel.innerHTML = `
+        <div class="surface-header">
+            <h3>Letzte Durchfuehrungen</h3>
+            <span>${completions.length} Eintraege</span>
+        </div>
+        ${completions.slice(0, 5).map((completion) => `
+            <div class="completion-history-item">
+                <div class="completion-history-head">
+                    <strong>${formatDate(completion.completed_at)}</strong>
+                    <span>${completion.photos?.length || 0} Foto(s)</span>
+                </div>
+                ${completion.completion_note ? `<div class="muted-copy">${escapeHtml(completion.completion_note)}</div>` : ''}
+                ${completion.signature_url ? `<a class="mini-btn" href="${escapeHtml(completion.signature_url)}" target="_blank" rel="noopener noreferrer">Unterschrift</a>` : ''}
+                ${
+                    completion.photos?.length
+                        ? `<div class="completion-photo-grid">${completion.photos.map((photo) => `
+                            <a class="completion-photo-tile" href="${escapeHtml(photo.url)}" target="_blank" rel="noopener noreferrer">
+                                <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.original_name)}">
+                            </a>
+                        `).join('')}</div>`
+                        : ''
+                }
+            </div>
+        `).join('')}
     `;
 }
 
@@ -540,6 +657,30 @@ function renderTemplateCategorySuggestions() {
             .sort((a, b) => a.localeCompare(b, 'de', { sensitivity: 'base' }))
     )];
     datalist.innerHTML = categories.map((category) => `<option value="${escapeHtml(category)}"></option>`).join('');
+}
+
+function getCompletionChecklistItems(value) {
+    return String(value || '')
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
+function toggleCompletionChecklistItem(index, checked) {
+    if (!appState.completionChecklistState[index]) return;
+    appState.completionChecklistState[index].checked = !!checked;
+}
+
+function refreshCompletionChecklistFromTextarea() {
+    const textarea = document.getElementById('plan-completion-checklist');
+    if (!textarea) return;
+    const items = getCompletionChecklistItems(textarea.value);
+    const existing = new Map(appState.completionChecklistState.map((entry) => [entry.label, !!entry.checked]));
+    appState.completionChecklistState = items.map((label) => ({
+        label,
+        checked: existing.has(label) ? existing.get(label) : false
+    }));
+    renderCompletionChecklist({ completion_checklist: textarea.value });
 }
 
 function syncApartmentOptions() {
@@ -670,6 +811,8 @@ async function submitPlanForm(event) {
         next_due_date: document.getElementById('plan-next-due-date').value,
         last_completed_at: document.getElementById('plan-last-completed-at').value,
         last_completion_note: document.getElementById('plan-completion-note').value.trim(),
+        completion_checklist: document.getElementById('plan-completion-checklist').value.trim(),
+        completion_requires_photo: document.getElementById('plan-requires-photo').checked,
         responsible_staff_id: Number(document.getElementById('plan-staff').value || 0) || null,
         responsible: document.getElementById('plan-responsible').value.trim(),
         priority: document.getElementById('plan-priority').value,
@@ -760,12 +903,18 @@ function resetPlanForm() {
     document.getElementById('plan-form').reset();
     document.getElementById('plan-id').value = '';
     appState.openedPlanId = null;
+    appState.planCompletions = [];
+    appState.completionChecklistState = [];
     fillAssetSelect();
     fillStaffSelects();
     document.getElementById('plan-interval-days').value = 180;
     document.getElementById('plan-priority').value = 'normal';
     document.getElementById('plan-active').checked = true;
+    document.getElementById('plan-requires-photo').checked = false;
     document.getElementById('plan-complete-btn').style.display = 'none';
+    document.getElementById('plan-completion-photos').value = '';
+    renderCompletionPhotoPreview();
+    clearPlanSignature();
     renderPlanFocusState();
 }
 
@@ -851,6 +1000,7 @@ function editPlan(id) {
     const plan = appState.plans.find((item) => Number(item.id) === Number(id));
     if (!plan) return;
     appState.openedPlanId = Number(id);
+    appState.completionChecklistState = getCompletionChecklistItems(plan.completion_checklist || '').map((label) => ({ label, checked: false }));
     setActiveTab('plans');
     document.getElementById('plan-id').value = plan.id;
     document.getElementById('plan-asset').value = plan.asset_id || '';
@@ -859,13 +1009,19 @@ function editPlan(id) {
     document.getElementById('plan-next-due-date').value = plan.next_due_date || '';
     document.getElementById('plan-last-completed-at').value = plan.last_completed_at || '';
     document.getElementById('plan-completion-note').value = plan.last_completion_note || '';
+    document.getElementById('plan-completion-checklist').value = plan.completion_checklist || '';
+    document.getElementById('plan-requires-photo').checked = !!plan.completion_requires_photo;
     document.getElementById('plan-staff').value = plan.responsible_staff_id || '';
     document.getElementById('plan-responsible').value = plan.responsible || '';
     document.getElementById('plan-priority').value = plan.priority || 'normal';
     document.getElementById('plan-instructions').value = plan.instructions || '';
     document.getElementById('plan-active').checked = !!plan.active;
     document.getElementById('plan-complete-btn').style.display = 'inline-flex';
+    document.getElementById('plan-completion-photos').value = '';
+    renderCompletionPhotoPreview();
+    clearPlanSignature();
     renderPlanFocusState();
+    loadPlanCompletionHistory(plan.id);
 }
 
 function closeOpenedPlan() {
@@ -900,6 +1056,16 @@ async function deleteStaff(id) {
 async function deletePlan(id) {
     if (!confirm('Wartungsplan wirklich löschen?')) return;
     await deleteEntity(`/api/maintenance/plans/${id}`);
+}
+
+async function loadPlanCompletionHistory(planId) {
+    try {
+        const result = await api(`/api/maintenance/plans/${planId}/completions?requesterId=${encodeURIComponent(appState.currentUser.id)}`);
+        appState.planCompletions = result.completions || [];
+        renderCompletionHistory(appState.planCompletions);
+    } catch (error) {
+        renderCompletionHistory([]);
+    }
 }
 
 function setCalendarView(view) {
@@ -1007,6 +1173,7 @@ function hydratePlanFromAsset() {
     const titleInput = document.getElementById('plan-title');
     const instructionsInput = document.getElementById('plan-instructions');
     const intervalInput = document.getElementById('plan-interval-days');
+    const checklistInput = document.getElementById('plan-completion-checklist');
 
     if (!titleInput.value.trim()) {
         titleInput.value = `${asset.name} Wartung`;
@@ -1014,9 +1181,14 @@ function hydratePlanFromAsset() {
     if (!instructionsInput.value.trim()) {
         instructionsInput.value = asset.template_checklist || asset.template_description || '';
     }
+    if (!checklistInput.value.trim()) {
+        checklistInput.value = asset.template_checklist || '';
+    }
     if (!Number(intervalInput.value || 0) || Number(intervalInput.value || 0) === 180) {
         intervalInput.value = asset.template_default_interval_days || 180;
     }
+    appState.completionChecklistState = getCompletionChecklistItems(checklistInput.value).map((label) => ({ label, checked: false }));
+    renderCompletionChecklist(appState.plans.find((item) => Number(item.id) === Number(appState.openedPlanId)) || { completion_checklist: checklistInput.value });
 }
 
 function getSelectedDate() {
@@ -1217,14 +1389,40 @@ async function completeOpenedPlan() {
         showAlert('Bitte zuerst einen Wartungsplan öffnen.', 'error');
         return;
     }
+    const plan = appState.plans.find((item) => Number(item.id) === id);
+    const signatureDataUrl = getPlanSignatureDataUrl();
+    if (!signatureDataUrl) {
+        showAlert('Bitte zuerst unterschreiben.', 'error');
+        return;
+    }
+    const photosInput = document.getElementById('plan-completion-photos');
+    const photoFiles = Array.from(photosInput.files || []);
+    if (plan?.completion_requires_photo && !photoFiles.length) {
+        showAlert('Fuer diese Wartung ist mindestens ein Foto Pflicht.', 'error');
+        return;
+    }
+    const incompleteChecklistItem = appState.completionChecklistState.find((entry) => !entry.checked);
+    if (incompleteChecklistItem) {
+        showAlert(`Checkliste noch offen: ${incompleteChecklistItem.label}`, 'error');
+        return;
+    }
     try {
-        await api(`/api/maintenance/plans/${id}/complete`, {
+        const formData = new FormData();
+        formData.append('requesterId', String(appState.currentUser.id));
+        formData.append('completion_note', document.getElementById('plan-completion-note').value.trim());
+        formData.append('signature_data_url', signatureDataUrl);
+        formData.append('checklist_state', JSON.stringify(appState.completionChecklistState));
+        for (const file of photoFiles) {
+            formData.append('photos', file);
+        }
+        const response = await fetch(`/api/maintenance/plans/${id}/complete`, {
             method: 'POST',
-            body: {
-                requesterId: appState.currentUser.id,
-                completion_note: document.getElementById('plan-completion-note').value.trim()
-            }
+            body: formData
         });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false) {
+            throw new Error(data.message || 'Plan konnte nicht abgeschlossen werden.');
+        }
         showAlert('Wartung als erledigt markiert.', 'success');
         await reloadBoardData();
         editPlan(id);
@@ -1315,6 +1513,112 @@ function bindTableSearch(elementId, filterKey) {
         appState.filters[filterKey] = String(input.value || '').trim().toLowerCase();
         renderBoard();
     });
+}
+
+function renderCompletionPhotoPreview() {
+    const preview = document.getElementById('plan-completion-photo-preview');
+    const input = document.getElementById('plan-completion-photos');
+    if (!preview || !input) return;
+    const files = Array.from(input.files || []);
+    if (!files.length) {
+        preview.innerHTML = '';
+        return;
+    }
+    preview.innerHTML = files.map((file) => `
+        <div class="completion-photo-tile">
+            <img src="${escapeHtml(URL.createObjectURL(file))}" alt="${escapeHtml(file.name)}">
+        </div>
+    `).join('');
+}
+
+function initializeSignaturePad() {
+    const canvas = document.getElementById('plan-signature-pad');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#111827';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    let drawing = false;
+
+    const getPoint = (event) => {
+        const rect = canvas.getBoundingClientRect();
+        const source = event.touches?.[0] || event;
+        return {
+            x: ((source.clientX - rect.left) / rect.width) * canvas.width,
+            y: ((source.clientY - rect.top) / rect.height) * canvas.height
+        };
+    };
+    const start = (event) => {
+        drawing = true;
+        const point = getPoint(event);
+        ctx.beginPath();
+        ctx.moveTo(point.x, point.y);
+        event.preventDefault();
+    };
+    const move = (event) => {
+        if (!drawing) return;
+        const point = getPoint(event);
+        ctx.lineTo(point.x, point.y);
+        ctx.stroke();
+        event.preventDefault();
+    };
+    const stop = () => {
+        drawing = false;
+    };
+
+    canvas.addEventListener('pointerdown', start);
+    canvas.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    canvas.addEventListener('touchstart', start, { passive: false });
+    canvas.addEventListener('touchmove', move, { passive: false });
+    canvas.addEventListener('touchend', stop);
+
+    appState.signaturePad = { canvas, ctx };
+}
+
+function clearPlanSignature() {
+    const signaturePad = appState.signaturePad;
+    if (!signaturePad) return;
+    signaturePad.ctx.clearRect(0, 0, signaturePad.canvas.width, signaturePad.canvas.height);
+    signaturePad.ctx.fillStyle = '#ffffff';
+    signaturePad.ctx.fillRect(0, 0, signaturePad.canvas.width, signaturePad.canvas.height);
+}
+
+function getPlanSignatureDataUrl() {
+    const signaturePad = appState.signaturePad;
+    if (!signaturePad) return '';
+    const { canvas, ctx } = signaturePad;
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let hasInk = false;
+    for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index] < 250 || pixels[index + 1] < 250 || pixels[index + 2] < 250) {
+            hasInk = true;
+            break;
+        }
+    }
+    return hasInk ? canvas.toDataURL('image/png') : '';
+}
+
+function getPlanDueRank(plan) {
+    const state = getPlanDueState(plan);
+    if (state === 'overdue') return 0;
+    if (state === 'due-soon') return 1;
+    return 2;
+}
+
+function openAssetLabelPrint(assetId) {
+    const resolvedAssetId = Number(assetId || document.getElementById('asset-id').value || 0);
+    if (!resolvedAssetId) {
+        showAlert('Bitte zuerst ein Wartungsobjekt auswählen.', 'error');
+        return;
+    }
+    window.open(`/maintenance-labels.html?asset=${resolvedAssetId}`, '_blank', 'noopener');
+}
+
+function openApartmentLabelPrint(apartmentId) {
+    window.open(`/maintenance-labels.html?apartment=${Number(apartmentId)}`, '_blank', 'noopener');
 }
 
 function matchesSearch(fields, term) {

@@ -162,6 +162,27 @@ function buildStoredFilename(targetDir, originalName) {
     return candidate;
 }
 
+function writeDataUrlImage(targetDir, preferredName, dataUrl) {
+    const match = String(dataUrl || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+    if (!match) return null;
+    const mimeType = match[1];
+    const extMap = {
+        'image/png': '.png',
+        'image/jpeg': '.jpg',
+        'image/jpg': '.jpg',
+        'image/webp': '.webp'
+    };
+    const extension = extMap[mimeType] || '.png';
+    const filename = buildStoredFilename(targetDir, `${preferredName || 'bild'}${extension}`);
+    const filePath = path.join(targetDir, filename);
+    fs.writeFileSync(filePath, Buffer.from(match[2], 'base64'));
+    return {
+        stored_name: filename,
+        mime_type: mimeType,
+        url: `/uploads/${filename}`
+    };
+}
+
 function hashIntegrationToken(token) {
     return crypto.createHash('sha256').update(String(token)).digest('hex');
 }
@@ -813,6 +834,8 @@ db.exec(`
         next_due_date TEXT DEFAULT '',
         last_completed_at TEXT DEFAULT '',
         last_completion_note TEXT DEFAULT '',
+        completion_checklist TEXT DEFAULT '',
+        completion_requires_photo INTEGER DEFAULT 0,
         responsible_staff_id INTEGER,
         responsible TEXT DEFAULT '',
         priority TEXT DEFAULT 'normal',
@@ -823,6 +846,27 @@ db.exec(`
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(asset_id) REFERENCES maintenance_assets(id),
         FOREIGN KEY(responsible_staff_id) REFERENCES maintenance_staff(id)
+    );
+    CREATE TABLE IF NOT EXISTS maintenance_plan_completions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER NOT NULL,
+        completed_at TEXT NOT NULL,
+        completion_note TEXT DEFAULT '',
+        checklist_state TEXT DEFAULT '',
+        signature_stored_name TEXT DEFAULT '',
+        signature_mime_type TEXT DEFAULT '',
+        created_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(plan_id) REFERENCES maintenance_plans(id)
+    );
+    CREATE TABLE IF NOT EXISTS maintenance_plan_completion_media (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        completion_id INTEGER NOT NULL,
+        original_name TEXT NOT NULL,
+        stored_name TEXT NOT NULL,
+        mime_type TEXT DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(completion_id) REFERENCES maintenance_plan_completions(id)
     );
     CREATE TABLE IF NOT EXISTS maintenance_email_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -874,6 +918,14 @@ try {
     if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'last_completion_note')) {
         db.prepare("ALTER TABLE maintenance_plans ADD COLUMN last_completion_note TEXT DEFAULT ''").run();
         console.log("Migration: Added last_completion_note to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'completion_checklist')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN completion_checklist TEXT DEFAULT ''").run();
+        console.log("Migration: Added completion_checklist to maintenance_plans");
+    }
+    if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'completion_requires_photo')) {
+        db.prepare("ALTER TABLE maintenance_plans ADD COLUMN completion_requires_photo INTEGER DEFAULT 0").run();
+        console.log("Migration: Added completion_requires_photo to maintenance_plans");
     }
     if (maintenancePlanCols.length && !maintenancePlanCols.some(c => c.name === 'responsible_staff_id')) {
         db.prepare("ALTER TABLE maintenance_plans ADD COLUMN responsible_staff_id INTEGER").run();
@@ -1011,6 +1063,8 @@ try {
             next_due_date TEXT DEFAULT '',
             last_completed_at TEXT DEFAULT '',
             last_completion_note TEXT DEFAULT '',
+            completion_checklist TEXT DEFAULT '',
+            completion_requires_photo INTEGER DEFAULT 0,
             responsible_staff_id INTEGER,
             responsible TEXT DEFAULT '',
             priority TEXT DEFAULT 'normal',
@@ -1019,6 +1073,25 @@ try {
             created_by INTEGER,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_plan_completions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_id INTEGER NOT NULL,
+            completed_at TEXT NOT NULL,
+            completion_note TEXT DEFAULT '',
+            checklist_state TEXT DEFAULT '',
+            signature_stored_name TEXT DEFAULT '',
+            signature_mime_type TEXT DEFAULT '',
+            created_by INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS maintenance_plan_completion_media (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            completion_id INTEGER NOT NULL,
+            original_name TEXT NOT NULL,
+            stored_name TEXT NOT NULL,
+            mime_type TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS maintenance_email_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2499,6 +2572,7 @@ function listMaintenancePlans() {
         ...row,
         active: Number(row.active || 0) === 1,
         interval_days: Number(row.interval_days || 0),
+        completion_requires_photo: Number(row.completion_requires_photo || 0) === 1,
         responsible_staff_id: row.responsible_staff_id ? Number(row.responsible_staff_id) : null
     }));
     const templateIds = [...new Set(plans.map((plan) => Number(plan.template_id)).filter(Boolean))];
@@ -2527,6 +2601,51 @@ function listMaintenancePlans() {
         ...plan,
         template_files: fileMap.get(Number(plan.template_id)) || [],
         template_default_interval_days: Number(plan.template_default_interval_days || 0)
+    }));
+}
+
+function listMaintenancePlanCompletions(planId) {
+    const completions = db.prepare(`
+        SELECT *
+        FROM maintenance_plan_completions
+        WHERE plan_id = ?
+        ORDER BY completed_at DESC, id DESC
+    `).all(Number(planId)).map((row) => ({
+        ...row,
+        signature_url: row.signature_stored_name ? `/uploads/${row.signature_stored_name}` : '',
+        checklist_state: (() => {
+            try {
+                return row.checklist_state ? JSON.parse(row.checklist_state) : [];
+            } catch (error) {
+                return [];
+            }
+        })()
+    }));
+    const completionIds = completions.map((completion) => Number(completion.id)).filter(Boolean);
+    const mediaMap = new Map();
+    if (completionIds.length) {
+        const placeholders = completionIds.map(() => '?').join(', ');
+        const mediaRows = db.prepare(`
+            SELECT id, completion_id, original_name, stored_name, mime_type
+            FROM maintenance_plan_completion_media
+            WHERE completion_id IN (${placeholders})
+            ORDER BY id ASC
+        `).all(...completionIds);
+        mediaRows.forEach((media) => {
+            const key = Number(media.completion_id);
+            if (!mediaMap.has(key)) mediaMap.set(key, []);
+            mediaMap.get(key).push({
+                id: media.id,
+                original_name: media.original_name,
+                stored_name: media.stored_name,
+                mime_type: media.mime_type || '',
+                url: `/uploads/${media.stored_name}`
+            });
+        });
+    }
+    return completions.map((completion) => ({
+        ...completion,
+        photos: mediaMap.get(Number(completion.id)) || []
     }));
 }
 
@@ -3274,6 +3393,17 @@ app.delete('/api/maintenance/staff/:id', (req, res) => {
     res.json({ success: true });
 });
 
+app.get('/api/maintenance/plans/:id/completions', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+
+    const id = Number(req.params.id);
+    if (!db.prepare('SELECT id FROM maintenance_plans WHERE id = ?').get(id)) {
+        return res.status(404).json({ success: false, message: 'Wartungsplan nicht gefunden' });
+    }
+    res.json({ success: true, completions: listMaintenancePlanCompletions(id) });
+});
+
 app.post('/api/maintenance/plans', (req, res) => {
     const requester = requireMaintenanceUser(req, res);
     if (!requester) return;
@@ -3292,8 +3422,8 @@ app.post('/api/maintenance/plans', (req, res) => {
     if (!title) return res.status(400).json({ success: false, message: 'Titel fehlt' });
 
     const result = db.prepare(`
-        INSERT INTO maintenance_plans (asset_id, title, interval_days, next_due_date, last_completed_at, last_completion_note, responsible_staff_id, responsible, priority, instructions, active, created_by, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO maintenance_plans (asset_id, title, interval_days, next_due_date, last_completed_at, last_completion_note, completion_checklist, completion_requires_photo, responsible_staff_id, responsible, priority, instructions, active, created_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `).run(
         assetId,
         title,
@@ -3301,6 +3431,8 @@ app.post('/api/maintenance/plans', (req, res) => {
         nextDueDate,
         normalizeMaintenanceDate(req.body?.last_completed_at),
         String(req.body?.last_completion_note || '').trim(),
+        String(req.body?.completion_checklist || '').trim(),
+        req.body?.completion_requires_photo ? 1 : 0,
         responsibleStaffId || null,
         String(req.body?.responsible || '').trim(),
         String(req.body?.priority || 'normal').trim() || 'normal',
@@ -3334,7 +3466,7 @@ app.put('/api/maintenance/plans/:id', (req, res) => {
 
     db.prepare(`
         UPDATE maintenance_plans
-        SET asset_id = ?, title = ?, interval_days = ?, next_due_date = ?, last_completed_at = ?, last_completion_note = ?, responsible_staff_id = ?, responsible = ?, priority = ?, instructions = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+        SET asset_id = ?, title = ?, interval_days = ?, next_due_date = ?, last_completed_at = ?, last_completion_note = ?, completion_checklist = ?, completion_requires_photo = ?, responsible_staff_id = ?, responsible = ?, priority = ?, instructions = ?, active = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
     `).run(
         assetId,
@@ -3343,6 +3475,8 @@ app.put('/api/maintenance/plans/:id', (req, res) => {
         normalizeMaintenanceDate(req.body?.next_due_date),
         normalizeMaintenanceDate(req.body?.last_completed_at),
         String(req.body?.last_completion_note || '').trim(),
+        String(req.body?.completion_checklist || '').trim(),
+        req.body?.completion_requires_photo ? 1 : 0,
         responsibleStaffId || null,
         String(req.body?.responsible || '').trim(),
         String(req.body?.priority || 'normal').trim() || 'normal',
@@ -3354,24 +3488,74 @@ app.put('/api/maintenance/plans/:id', (req, res) => {
     res.json({ success: true });
 });
 
-app.post('/api/maintenance/plans/:id/complete', (req, res) => {
+app.post('/api/maintenance/plans/:id/complete', upload.array('photos', 12), (req, res) => {
     const requester = requireMaintenanceUser(req, res);
     if (!requester) return;
 
     const id = Number(req.params.id);
-    const plan = db.prepare('SELECT id, interval_days FROM maintenance_plans WHERE id = ?').get(id);
+    const plan = db.prepare('SELECT id, interval_days, completion_checklist, completion_requires_photo FROM maintenance_plans WHERE id = ?').get(id);
     if (!plan) return res.status(404).json({ success: false, message: 'Wartungsplan nicht gefunden' });
 
     const completedAt = normalizeMaintenanceDate(req.body?.completed_at) || new Date().toISOString().slice(0, 10);
     const nextDueDate = addDaysIso(completedAt, Number(plan.interval_days || 0));
     const completionNote = String(req.body?.completion_note || '').trim();
+    const checklistStateRaw = String(req.body?.checklist_state || '[]').trim() || '[]';
+    let checklistState = [];
+    try {
+        checklistState = JSON.parse(checklistStateRaw);
+    } catch (error) {
+        checklistState = [];
+    }
+    const requiredChecklistItems = String(plan.completion_checklist || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+    if (requiredChecklistItems.length) {
+        const incompleteItem = requiredChecklistItems.find((item) => {
+            const match = checklistState.find((entry) => String(entry?.label || '').trim() === item);
+            return !match || !match.checked;
+        });
+        if (incompleteItem) {
+            return res.status(400).json({ success: false, message: `Checkliste noch offen: ${incompleteItem}` });
+        }
+    }
+    const signatureDataUrl = String(req.body?.signature_data_url || '').trim();
+    const signatureFile = writeDataUrlImage(uploadDir, `wartung-signatur-${id}`, signatureDataUrl);
+    if (!signatureFile) {
+        return res.status(400).json({ success: false, message: 'Bitte unterschreiben, bevor du die Wartung abschließt.' });
+    }
+    const uploadedPhotos = Array.isArray(req.files) ? req.files : [];
+    if (Number(plan.completion_requires_photo || 0) === 1 && !uploadedPhotos.length) {
+        return res.status(400).json({ success: false, message: 'Für diese Wartung ist mindestens ein Foto Pflicht.' });
+    }
+    const completionResult = db.prepare(`
+        INSERT INTO maintenance_plan_completions (plan_id, completed_at, completion_note, checklist_state, signature_stored_name, signature_mime_type, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        id,
+        completedAt,
+        completionNote,
+        JSON.stringify(checklistState),
+        signatureFile.stored_name,
+        signatureFile.mime_type,
+        requester.id
+    );
+    const completionId = Number(completionResult.lastInsertRowid);
+    for (const file of uploadedPhotos) {
+        db.prepare(`
+            INSERT INTO maintenance_plan_completion_media (completion_id, original_name, stored_name, mime_type)
+            VALUES (?, ?, ?, ?)
+        `).run(
+            completionId,
+            file.originalname,
+            file.filename,
+            file.mimetype || ''
+        );
+    }
     db.prepare(`
         UPDATE maintenance_plans
         SET last_completed_at = ?, last_completion_note = ?, next_due_date = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
     `).run(completedAt, completionNote, nextDueDate, id);
 
-    res.json({ success: true, completed_at: completedAt, next_due_date: nextDueDate });
+    res.json({ success: true, completed_at: completedAt, next_due_date: nextDueDate, completion_id: completionId });
 });
 
 app.delete('/api/maintenance/plans/:id', (req, res) => {

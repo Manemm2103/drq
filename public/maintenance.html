@@ -3,10 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="DR-MAINT">
+    <meta name="theme-color" content="#0f172a">
     <title>DR-MAINTENANCE BOARD</title>
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=4">
     <link rel="icon" type="image/png" href="/drhome-logo.png?v=2">
-    <link rel="stylesheet" href="maintenance.css?v=7">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="stylesheet" href="maintenance.css?v=8">
 </head>
 <body>
     <div class="maintenance-shell">
@@ -48,7 +53,7 @@
                 </div>
                 <div class="header-right">
                     <button id="maintenance-test-mail-btn" class="action-btn secondary" type="button" onclick="sendMaintenanceTestMail()" hidden>Testmail senden</button>
-                    <div id="board-version" class="board-version">Version 1.3.9</div>
+                    <div id="board-version" class="board-version">Version 1.4.0</div>
                 </div>
             </header>
 
@@ -267,6 +272,7 @@
                                 <div class="form-actions">
                                     <button type="submit" class="action-btn">Speichern</button>
                                     <button type="button" class="action-btn secondary" onclick="resetAssetForm()">Neu</button>
+                                    <button type="button" class="action-btn secondary" onclick="openAssetLabelPrint()">QR drucken</button>
                                 </div>
                             </form>
                         </div>
@@ -430,6 +436,8 @@
                                     </select>
                                 </label>
                                 <label>Anweisung / Ablauf<textarea id="plan-instructions" rows="5"></textarea></label>
+                                <label>Abschluss-Checkliste<textarea id="plan-completion-checklist" rows="5" placeholder="Eine Aufgabe pro Zeile"></textarea></label>
+                                <label class="inline-check"><input type="checkbox" id="plan-requires-photo"> Fotos bei Abschluss Pflicht</label>
                                 <label>Wartungsbemerkung<textarea id="plan-completion-note" rows="4" placeholder="Bemerkung zur Durchführung der Wartung"></textarea></label>
                                 <label class="inline-check"><input type="checkbox" id="plan-active" checked> Aktiv</label>
                                 <div class="form-actions">
@@ -439,6 +447,31 @@
                                     <button type="button" class="action-btn secondary" onclick="resetPlanForm()">Neu</button>
                                 </div>
                             </form>
+                            <div id="plan-completion-workflow" class="completion-workflow" hidden>
+                                <div class="surface-header">
+                                    <h3>Wartung durchführen</h3>
+                                    <span>Mobil nutzbar mit Kamera und Unterschrift</span>
+                                </div>
+                                <div id="plan-completion-checklist-panel" class="completion-panel-block" hidden></div>
+                                <div class="completion-panel-block">
+                                    <label>Fotos der Wartung
+                                        <input type="file" id="plan-completion-photos" accept="image/*" capture="environment" multiple>
+                                    </label>
+                                    <div id="plan-photo-required-hint" class="muted-copy"></div>
+                                    <div id="plan-completion-photo-preview" class="completion-photo-grid"></div>
+                                </div>
+                                <div class="completion-panel-block">
+                                    <div class="surface-header compact">
+                                        <h3>Unterschrift</h3>
+                                        <span>Pflicht vor dem Abschluss</span>
+                                    </div>
+                                    <canvas id="plan-signature-pad" class="signature-pad" width="640" height="220"></canvas>
+                                    <div class="form-actions">
+                                        <button type="button" class="action-btn secondary" onclick="clearPlanSignature()">Unterschrift löschen</button>
+                                    </div>
+                                </div>
+                                <div id="plan-completion-history" class="linked-docs-panel" hidden></div>
+                            </div>
                             <div id="plan-linked-docs" class="linked-docs-panel" hidden></div>
                         </div>
 
@@ -471,6 +504,6 @@
         </main>
     </div>
 
-    <script src="maintenance.js?v=12"></script>
+    <script src="maintenance.js?v=13"></script>
 </body>
 </html>
