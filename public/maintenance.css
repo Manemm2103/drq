@@ -298,6 +298,12 @@ textarea {
     flex-wrap: wrap;
 }
 
+.plan-actions-bottom {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+}
+
 .action-btn {
     padding: 10px 14px;
     background: var(--accent);
@@ -308,6 +314,15 @@ textarea {
     background: #fff;
     color: var(--text);
     border: 1px solid var(--line);
+}
+
+.action-btn.complete-action {
+    background: #16a34a;
+    color: #fff;
+}
+
+.action-btn.complete-action:hover {
+    background: #15803d;
 }
 
 .table-wrap {
