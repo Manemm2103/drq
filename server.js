@@ -564,6 +564,14 @@ function requireMaintenanceUser(req, res) {
     return null;
 }
 
+function requireMaintenanceManager(req, res) {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return null;
+    if (requester.role === 'admin') return requester;
+    res.status(403).json({ success: false, message: 'Nur Admins duerfen Wartungsstammdaten verwalten.' });
+    return null;
+}
+
 function normalizeMaintenanceDate(value) {
     const normalized = String(value || '').trim();
     if (!normalized) return '';
@@ -2649,6 +2657,71 @@ function listMaintenancePlanCompletions(planId) {
     }));
 }
 
+function listMaintenanceArchive() {
+    const completions = db.prepare(`
+        SELECT
+            mc.*,
+            mp.title AS plan_title,
+            mp.priority AS plan_priority,
+            mp.completion_requires_photo AS completion_requires_photo,
+            ma.id AS asset_id,
+            ma.name AS asset_name,
+            ma.location AS asset_location,
+            b.name AS building_name,
+            a.name AS apartment_name,
+            a.tenant_name AS tenant_name,
+            t.name AS template_name,
+            u.username AS completed_by_username,
+            u.display_name AS completed_by_display_name
+        FROM maintenance_plan_completions mc
+        JOIN maintenance_plans mp ON mp.id = mc.plan_id
+        JOIN maintenance_assets ma ON ma.id = mp.asset_id
+        JOIN maintenance_buildings b ON b.id = ma.building_id
+        LEFT JOIN maintenance_apartments a ON a.id = ma.apartment_id
+        LEFT JOIN maintenance_asset_templates t ON t.id = ma.template_id
+        LEFT JOIN users u ON u.id = mc.created_by
+        ORDER BY mc.completed_at DESC, mc.id DESC
+    `).all().map((row) => ({
+        ...row,
+        signature_url: row.signature_stored_name ? `/uploads/${row.signature_stored_name}` : '',
+        checklist_state: (() => {
+            try {
+                return row.checklist_state ? JSON.parse(row.checklist_state) : [];
+            } catch (error) {
+                return [];
+            }
+        })()
+    }));
+
+    const completionIds = completions.map((completion) => Number(completion.id)).filter(Boolean);
+    const photoMap = new Map();
+    if (completionIds.length) {
+        const placeholders = completionIds.map(() => '?').join(', ');
+        const photos = db.prepare(`
+            SELECT id, completion_id, original_name, stored_name, mime_type
+            FROM maintenance_plan_completion_media
+            WHERE completion_id IN (${placeholders})
+            ORDER BY id ASC
+        `).all(...completionIds);
+        photos.forEach((photo) => {
+            const key = Number(photo.completion_id);
+            if (!photoMap.has(key)) photoMap.set(key, []);
+            photoMap.get(key).push({
+                id: photo.id,
+                original_name: photo.original_name,
+                stored_name: photo.stored_name,
+                mime_type: photo.mime_type || '',
+                url: `/uploads/${photo.stored_name}`
+            });
+        });
+    }
+
+    return completions.map((completion) => ({
+        ...completion,
+        photos: photoMap.get(Number(completion.id)) || []
+    }));
+}
+
 function getMaintenanceSummary() {
     const today = new Date().toISOString().slice(0, 10);
     const soon = addDaysIso(today, 30);
@@ -2944,14 +3017,22 @@ app.get('/api/maintenance/bootstrap', (req, res) => {
             display_name: requester.display_name || '',
             role: requester.role
         },
+        maintenanceMode: requester.role === 'admin' ? 'manager' : 'executor',
         summary: getMaintenanceSummary(),
         buildings: listMaintenanceBuildings(),
         apartments: listMaintenanceApartments(),
         templates: listMaintenanceTemplates(),
         assets: listMaintenanceAssets(),
         staff: listMaintenanceStaff(),
-        plans: listMaintenancePlans()
+        plans: listMaintenancePlans(),
+        archive: listMaintenanceArchive()
     });
+});
+
+app.get('/api/maintenance/archive', (req, res) => {
+    const requester = requireMaintenanceUser(req, res);
+    if (!requester) return;
+    res.json({ success: true, archive: listMaintenanceArchive() });
 });
 
 app.post('/api/maintenance/test-mail', async (req, res) => {
@@ -2991,7 +3072,7 @@ app.post('/api/maintenance/test-mail', async (req, res) => {
 });
 
 app.post('/api/maintenance/buildings', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const name = String(req.body?.name || '').trim();
@@ -3013,7 +3094,7 @@ app.post('/api/maintenance/buildings', (req, res) => {
 });
 
 app.put('/api/maintenance/buildings/:id', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const id = Number(req.params.id);
@@ -3040,7 +3121,7 @@ app.put('/api/maintenance/buildings/:id', (req, res) => {
 });
 
 app.delete('/api/maintenance/buildings/:id', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const id = Number(req.params.id);
@@ -3054,7 +3135,7 @@ app.delete('/api/maintenance/buildings/:id', (req, res) => {
 });
 
 app.post('/api/maintenance/apartments', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const buildingId = Number(req.body?.building_id);
@@ -3081,7 +3162,7 @@ app.post('/api/maintenance/apartments', (req, res) => {
 });
 
 app.put('/api/maintenance/apartments/:id', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const id = Number(req.params.id);
@@ -3113,7 +3194,7 @@ app.put('/api/maintenance/apartments/:id', (req, res) => {
 });
 
 app.delete('/api/maintenance/apartments/:id', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const id = Number(req.params.id);
@@ -3126,7 +3207,7 @@ app.delete('/api/maintenance/apartments/:id', (req, res) => {
 });
 
 app.post('/api/maintenance/templates', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const name = String(req.body?.name || '').trim();
@@ -3150,7 +3231,7 @@ app.post('/api/maintenance/templates', (req, res) => {
 });
 
 app.put('/api/maintenance/templates/:id', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const id = Number(req.params.id);
@@ -3179,7 +3260,7 @@ app.put('/api/maintenance/templates/:id', (req, res) => {
 });
 
 app.post('/api/maintenance/templates/:id/files', upload.single('file'), (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
     const templateId = Number(req.params.id);
     if (!db.prepare('SELECT id FROM maintenance_asset_templates WHERE id = ?').get(templateId)) {
@@ -3210,7 +3291,7 @@ app.post('/api/maintenance/templates/:id/files', upload.single('file'), (req, re
 });
 
 app.delete('/api/maintenance/templates/:templateId/files/:fileId', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
     const templateId = Number(req.params.templateId);
     const fileId = Number(req.params.fileId);
@@ -3223,7 +3304,7 @@ app.delete('/api/maintenance/templates/:templateId/files/:fileId', (req, res) =>
 });
 
 app.delete('/api/maintenance/templates/:id', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const id = Number(req.params.id);
@@ -3236,7 +3317,7 @@ app.delete('/api/maintenance/templates/:id', (req, res) => {
 });
 
 app.post('/api/maintenance/assets', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const templateId = Number(req.body?.template_id);
@@ -3274,7 +3355,7 @@ app.post('/api/maintenance/assets', (req, res) => {
 });
 
 app.put('/api/maintenance/assets/:id', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const id = Number(req.params.id);
@@ -3317,7 +3398,7 @@ app.put('/api/maintenance/assets/:id', (req, res) => {
 });
 
 app.delete('/api/maintenance/assets/:id', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const id = Number(req.params.id);
@@ -3330,7 +3411,7 @@ app.delete('/api/maintenance/assets/:id', (req, res) => {
 });
 
 app.post('/api/maintenance/staff', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const name = String(req.body?.name || '').trim();
@@ -3353,7 +3434,7 @@ app.post('/api/maintenance/staff', (req, res) => {
 });
 
 app.put('/api/maintenance/staff/:id', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const id = Number(req.params.id);
@@ -3381,7 +3462,7 @@ app.put('/api/maintenance/staff/:id', (req, res) => {
 });
 
 app.delete('/api/maintenance/staff/:id', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const id = Number(req.params.id);
@@ -3405,7 +3486,7 @@ app.get('/api/maintenance/plans/:id/completions', (req, res) => {
 });
 
 app.post('/api/maintenance/plans', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const assetId = Number(req.body?.asset_id);
@@ -3445,7 +3526,7 @@ app.post('/api/maintenance/plans', (req, res) => {
 });
 
 app.put('/api/maintenance/plans/:id', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     const id = Number(req.params.id);
@@ -3559,7 +3640,7 @@ app.post('/api/maintenance/plans/:id/complete', upload.array('photos', 12), (req
 });
 
 app.delete('/api/maintenance/plans/:id', (req, res) => {
-    const requester = requireMaintenanceUser(req, res);
+    const requester = requireMaintenanceManager(req, res);
     if (!requester) return;
 
     db.prepare('DELETE FROM maintenance_plans WHERE id = ?').run(Number(req.params.id));

@@ -27,15 +27,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-function renderLabels(assets, apartments) {
+function renderLabels(assets, apartments, buildings) {
     const params = new URLSearchParams(window.location.search);
+    const buildingId = Number(params.get('building') || 0);
     const apartmentId = Number(params.get('apartment') || 0);
     const assetId = Number(params.get('asset') || 0);
 
     let targetAssets = assets;
     let subtitle = 'Alle Wartungsobjekte';
 
-    if (apartmentId) {
+    if (buildingId) {
+        const building = buildings.find((item) => Number(item.id) === buildingId);
+        targetAssets = assets.filter((asset) => Number(asset.building_id) === buildingId);
+        subtitle = building ? `Gebäude: ${building.name}` : `Gebäude ${buildingId}`;
+    } else if (apartmentId) {
         const apartment = apartments.find((item) => Number(item.id) === apartmentId);
         targetAssets = assets.filter((asset) => Number(asset.apartment_id) === apartmentId);
         subtitle = apartment ? `Apartment: ${apartment.name}` : `Apartment ${apartmentId}`;
@@ -57,7 +62,7 @@ function renderLabels(assets, apartments) {
         return `
             <div class="label-card">
                 <strong>${escapeHtml(asset.name || 'Wartungsobjekt')}</strong>
-                <div class="muted-copy">${escapeHtml(asset.building_name || '-')} / ${escapeHtml(asset.apartment_name || '-')}</div>
+                <div class="muted-copy">${escapeHtml(asset.building_name || '-')} / ${escapeHtml(asset.apartment_name || 'Kein Apartment')}</div>
                 <div class="muted-copy">${escapeHtml(asset.location || asset.template_name || '')}</div>
                 <img src="${qrUrl}" alt="QR Code fuer ${escapeHtml(asset.name || 'Wartungsobjekt')}">
                 <div class="label-link">${escapeHtml(link)}</div>

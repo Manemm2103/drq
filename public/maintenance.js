@@ -1,6 +1,7 @@
 const storageKey = 'icq_user';
 const appState = {
     currentUser: null,
+    maintenanceMode: 'manager',
     summary: {},
     buildings: [],
     apartments: [],
@@ -8,8 +9,10 @@ const appState = {
     assets: [],
     staff: [],
     plans: [],
+    archive: [],
     planCompletions: [],
     openedPlanId: null,
+    openedArchiveId: null,
     completionChecklistState: [],
     completionPhotoFiles: [],
     signaturePad: null,
@@ -21,7 +24,8 @@ const appState = {
         assets: '',
         staff: '',
         calendar: '',
-        plans: ''
+        plans: '',
+        archive: ''
     },
     calendarView: 'month',
     calendarDate: new Date(),
@@ -54,6 +58,7 @@ function bindNavigation() {
     bindTableSearch('staff-search', 'staff');
     bindTableSearch('calendar-search', 'calendar');
     bindTableSearch('plan-search', 'plans');
+    bindTableSearch('archive-search', 'archive');
 }
 
 function setActiveTab(tabName) {
@@ -71,7 +76,8 @@ function setActiveTab(tabName) {
         assets: 'Wartungsobjekte',
         staff: 'Mitarbeiter',
         calendar: 'Kalender',
-        plans: 'Wartungspläne'
+        plans: 'Wartungspläne',
+        archive: 'Archiv'
     };
     document.getElementById('tab-title').textContent = titleMap[tabName] || 'Dashboard';
 }
@@ -116,6 +122,8 @@ async function bootstrapBoard() {
         appState.assets = result.assets || [];
         appState.staff = result.staff || [];
         appState.plans = result.plans || [];
+        appState.archive = result.archive || [];
+        appState.maintenanceMode = result.maintenanceMode || 'executor';
         renderSession(result.currentUser || appState.currentUser);
         renderBoard();
         handleMaintenanceLinkTarget();
@@ -131,7 +139,9 @@ async function bootstrapBoard() {
 
 function renderSession(user) {
     document.getElementById('session-user').textContent = getVisibleName(user);
-    document.getElementById('session-role').textContent = user.role === 'admin' ? 'Administrator' : 'Board-Benutzer';
+    document.getElementById('session-role').textContent = isMaintenanceManager()
+        ? 'Administrator / Verwaltung'
+        : 'Wartungsteam / Ausführung';
     const testMailButton = document.getElementById('maintenance-test-mail-btn');
     if (testMailButton) {
         testMailButton.hidden = user.role !== 'admin';
@@ -139,6 +149,7 @@ function renderSession(user) {
 }
 
 function renderBoard() {
+    applyMaintenanceMode();
     renderSummary();
     renderBuildings();
     renderApartments();
@@ -147,6 +158,7 @@ function renderBoard() {
     renderStaff();
     renderCalendar();
     renderPlans();
+    renderArchive();
     fillBuildingSelects();
     fillTemplateSelect();
     fillAssetSelect();
@@ -158,6 +170,22 @@ function renderBoard() {
     syncApartmentOptions();
     renderPlanFocusState();
     renderTemplateFileList();
+}
+
+function isMaintenanceManager() {
+    return appState.maintenanceMode === 'manager';
+}
+
+function applyMaintenanceMode() {
+    const managerMode = isMaintenanceManager();
+    document.querySelectorAll('[data-manager-only="true"]').forEach((element) => {
+        element.hidden = !managerMode;
+    });
+    const activeButton = document.querySelector('.nav-btn.active');
+    if (!managerMode && activeButton?.dataset?.tab && ['buildings', 'apartments', 'templates', 'assets', 'staff'].includes(activeButton.dataset.tab)) {
+        setActiveTab('plans');
+    }
+    applyPlanFormPermissions();
 }
 
 function handleMaintenanceLinkTarget() {
@@ -267,6 +295,7 @@ function renderBuildings() {
             <td>
                 <div class="table-actions">
                     <button class="mini-btn" onclick="event.stopPropagation(); editBuilding(${building.id})">Bearbeiten</button>
+                    <button class="mini-btn" onclick="event.stopPropagation(); openBuildingLabelPrint(${building.id})">QR Labels</button>
                     <button class="mini-btn danger" onclick="event.stopPropagation(); deleteBuilding(${building.id})">Löschen</button>
                 </div>
             </td>
@@ -357,7 +386,7 @@ function renderAssets() {
             <td><strong>${escapeHtml(asset.name)}</strong><div class="muted-copy">${escapeHtml(asset.location || '')}</div></td>
             <td>${escapeHtml(asset.template_name || '-')}</td>
             <td>${escapeHtml(asset.building_name || '-')}</td>
-            <td>${escapeHtml(asset.apartment_name || '-')}</td>
+            <td>${escapeHtml(asset.apartment_name || 'Kein Apartment')}</td>
             <td><span class="status-pill">${escapeHtml(asset.status || 'active')}</span></td>
             <td>${asset.plan_count || 0}</td>
             <td>
@@ -448,11 +477,116 @@ function renderPlans() {
             <td>
                 <div class="table-actions">
                     <button class="mini-btn" onclick="event.stopPropagation(); editPlan(${plan.id})">Öffnen</button>
-                    <button class="mini-btn danger" onclick="event.stopPropagation(); deletePlan(${plan.id})">Löschen</button>
+                    ${isMaintenanceManager() ? `<button class="mini-btn danger" onclick="event.stopPropagation(); deletePlan(${plan.id})">Löschen</button>` : ''}
                 </div>
             </td>
         </tr>
     `).join('');
+}
+
+function renderArchive() {
+    const body = document.getElementById('archive-body');
+    if (!body) return;
+    const filteredArchive = appState.archive.filter((entry) => matchesSearch([
+        entry.plan_title,
+        entry.asset_name,
+        entry.asset_location,
+        entry.building_name,
+        entry.apartment_name,
+        entry.tenant_name,
+        entry.template_name,
+        entry.completed_by_display_name,
+        entry.completed_by_username,
+        entry.completion_note
+    ], appState.filters.archive));
+    if (!filteredArchive.length) {
+        body.innerHTML = `<tr><td colspan="6" class="muted-copy">Noch keine abgeschlossenen Wartungen im Archiv.</td></tr>`;
+        renderArchiveDetail(null);
+        return;
+    }
+    if (!filteredArchive.some((entry) => Number(entry.id) === Number(appState.openedArchiveId))) {
+        appState.openedArchiveId = Number(filteredArchive[0].id);
+    }
+    body.innerHTML = filteredArchive.map((entry) => `
+        <tr class="clickable-row ${Number(entry.id) === Number(appState.openedArchiveId) ? 'selected-row' : ''}" onclick="openArchiveEntry(${entry.id})">
+            <td>${formatDate(entry.completed_at)}</td>
+            <td><strong>${escapeHtml(entry.plan_title || '-')}</strong></td>
+            <td>${escapeHtml(entry.asset_name || '-')}</td>
+            <td>${escapeHtml(entry.building_name || '-')}</td>
+            <td>${escapeHtml(getVisibleName({ display_name: entry.completed_by_display_name, username: entry.completed_by_username }) || '-')}</td>
+            <td><button class="mini-btn" onclick="event.stopPropagation(); openArchiveEntry(${entry.id})">Ansehen</button></td>
+        </tr>
+    `).join('');
+    renderArchiveDetail(filteredArchive.find((entry) => Number(entry.id) === Number(appState.openedArchiveId)) || null);
+}
+
+function openArchiveEntry(id) {
+    appState.openedArchiveId = Number(id);
+    setActiveTab('archive');
+    renderArchive();
+}
+
+function renderArchiveDetail(entry) {
+    const emptyState = document.getElementById('archive-detail-empty');
+    const detail = document.getElementById('archive-detail');
+    if (!detail || !emptyState) return;
+    if (!entry) {
+        emptyState.hidden = false;
+        detail.hidden = true;
+        detail.innerHTML = '';
+        return;
+    }
+    emptyState.hidden = true;
+    detail.hidden = false;
+    const checklist = Array.isArray(entry.checklist_state) ? entry.checklist_state : [];
+    const photos = Array.isArray(entry.photos) ? entry.photos : [];
+    detail.innerHTML = `
+        <div class="surface-header">
+            <h3>${escapeHtml(entry.plan_title || 'Abgeschlossene Wartung')}</h3>
+            <span>${formatDate(entry.completed_at)} · ${escapeHtml(entry.building_name || '-')}</span>
+        </div>
+        <div class="archive-detail-grid">
+            <div><strong>Objekt</strong><span>${escapeHtml(entry.asset_name || '-')}</span></div>
+            <div><strong>Apartment</strong><span>${escapeHtml(entry.apartment_name || 'Kein Apartment')}</span></div>
+            <div><strong>Stammdaten</strong><span>${escapeHtml(entry.template_name || '-')}</span></div>
+            <div><strong>Erledigt von</strong><span>${escapeHtml(getVisibleName({ display_name: entry.completed_by_display_name, username: entry.completed_by_username }) || '-')}</span></div>
+            <div><strong>Priorität</strong><span>${escapeHtml(renderPriorityLabel(entry.plan_priority))}</span></div>
+            <div><strong>Fotos</strong><span>${photos.length}</span></div>
+        </div>
+        ${entry.completion_note ? `<div class="archive-note"><strong>Bemerkung</strong><p>${escapeHtml(entry.completion_note)}</p></div>` : ''}
+        ${checklist.length ? `
+            <div class="completion-panel-block archive-panel">
+                <div class="surface-header compact">
+                    <h3>Abgehakte Checkliste</h3>
+                    <span>Nur Lesemodus</span>
+                </div>
+                <div class="completion-checklist">
+                    ${checklist.map((item) => `
+                        <label class="completion-check-item is-readonly">
+                            <input type="checkbox" ${item.checked ? 'checked' : ''} disabled>
+                            <span>${escapeHtml(item.label || '')}</span>
+                        </label>
+                    `).join('')}
+                </div>
+            </div>
+        ` : ''}
+        ${entry.signature_url ? `<div class="archive-signature"><strong>Unterschrift</strong><a class="mini-btn" href="${escapeHtml(entry.signature_url)}" target="_blank" rel="noopener noreferrer">Öffnen</a></div>` : ''}
+        ${photos.length ? `
+            <div class="completion-panel-block archive-panel">
+                <div class="surface-header compact">
+                    <h3>Fotos</h3>
+                    <span>${photos.length} Datei(en)</span>
+                </div>
+                <div class="completion-photo-grid">
+                    ${photos.map((photo) => `
+                        <a class="completion-photo-tile" href="${escapeHtml(photo.url)}" target="_blank" rel="noopener noreferrer">
+                            <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.original_name)}">
+                        </a>
+                    `).join('')}
+                </div>
+            </div>
+        ` : ''}
+    `;
 }
 
 function renderPlanFocusState() {
@@ -467,7 +601,7 @@ function renderPlanFocusState() {
 
     if (listSurface) listSurface.hidden = false;
     if (closeBtn) closeBtn.style.display = openedPlan ? 'inline-flex' : 'none';
-    if (checklistEditorBlock) checklistEditorBlock.hidden = !!openedPlan;
+    if (checklistEditorBlock) checklistEditorBlock.hidden = !!openedPlan || !isMaintenanceManager();
 
     if (workflow) workflow.hidden = !openedPlan;
     if (requiredHint) {
@@ -597,6 +731,31 @@ function renderCompletionHistory(completions) {
             </div>
         `).join('')}
     `;
+}
+
+function applyPlanFormPermissions() {
+    const managerMode = isMaintenanceManager();
+    const form = document.getElementById('plan-form');
+    if (!form) return;
+    form.querySelectorAll('input, select, textarea').forEach((field) => {
+        if (field.type === 'hidden') return;
+        if (field.id === 'plan-completion-note') {
+            field.disabled = false;
+            field.readOnly = false;
+            return;
+        }
+        if (managerMode) {
+            field.disabled = false;
+            if ('readOnly' in field) field.readOnly = false;
+            return;
+        }
+        if ('readOnly' in field) {
+            field.readOnly = true;
+        }
+        if (field.tagName === 'SELECT' || field.type === 'checkbox') {
+            field.disabled = true;
+        }
+    });
 }
 
 function fillBuildingSelects() {
@@ -918,6 +1077,7 @@ async function saveEntity(url, method, payload, successMessage) {
 
 async function reloadBoardData() {
     const result = await api(`/api/maintenance/bootstrap?requesterId=${encodeURIComponent(appState.currentUser.id)}`);
+    appState.maintenanceMode = result.maintenanceMode || 'executor';
     appState.summary = result.summary || {};
     appState.buildings = result.buildings || [];
     appState.apartments = result.apartments || [];
@@ -925,6 +1085,7 @@ async function reloadBoardData() {
     appState.assets = result.assets || [];
     appState.staff = result.staff || [];
     appState.plans = result.plans || [];
+    appState.archive = result.archive || [];
     renderBoard();
 }
 
@@ -983,6 +1144,7 @@ function resetPlanForm() {
     renderCompletionPhotoPreview();
     clearPlanSignature();
     renderPlanFocusState();
+    applyPlanFormPermissions();
 }
 
 function resetCalendarQuickForm() {
@@ -1091,6 +1253,7 @@ function editPlan(id) {
     renderCompletionPhotoPreview();
     clearPlanSignature();
     renderPlanFocusState();
+    applyPlanFormPermissions();
     loadPlanCompletionHistory(plan.id);
 }
 
@@ -1710,8 +1873,22 @@ function openAssetLabelPrint(assetId) {
     window.open(`/maintenance-labels.html?asset=${resolvedAssetId}`, '_blank', 'noopener');
 }
 
+function openBuildingLabelPrint(buildingId) {
+    window.open(`/maintenance-labels.html?building=${Number(buildingId)}`, '_blank', 'noopener');
+}
+
 function openApartmentLabelPrint(apartmentId) {
     window.open(`/maintenance-labels.html?apartment=${Number(apartmentId)}`, '_blank', 'noopener');
+}
+
+function renderPriorityLabel(priority) {
+    const labels = {
+        low: 'Niedrig',
+        normal: 'Normal',
+        high: 'Hoch',
+        critical: 'Kritisch'
+    };
+    return labels[String(priority || 'normal')] || 'Normal';
 }
 
 function matchesSearch(fields, term) {
