@@ -304,6 +304,10 @@ textarea {
     border-top: 1px solid var(--line);
 }
 
+.compact-actions {
+    margin-top: -4px;
+}
+
 .action-btn {
     padding: 10px 14px;
     background: var(--accent);
@@ -380,6 +384,33 @@ textarea {
     gap: 10px;
 }
 
+.checklist-editor-block {
+    display: grid;
+    gap: 10px;
+}
+
+.checklist-add-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+}
+
+.checklist-editor-list {
+    display: grid;
+    gap: 8px;
+}
+
+.checklist-editor-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
 .completion-check-item {
     display: flex;
     align-items: flex-start;
@@ -403,12 +434,26 @@ textarea {
     border: 1px solid var(--line);
     background: #fff;
     aspect-ratio: 1;
+    position: relative;
 }
 
 .completion-photo-tile img {
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+
+.completion-photo-remove {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    border: none;
+    background: rgba(15, 23, 42, 0.82);
+    color: #fff;
+    cursor: pointer;
 }
 
 .signature-pad {
@@ -852,6 +897,11 @@ th {
 
     .completion-photo-grid {
         grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .checklist-add-row,
+    .checklist-editor-item {
+        grid-template-columns: 1fr;
     }
 
     .signature-pad {
