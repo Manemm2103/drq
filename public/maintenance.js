@@ -461,11 +461,13 @@ function renderPlanFocusState() {
     const docsPanel = document.getElementById('plan-linked-docs');
     const workflow = document.getElementById('plan-completion-workflow');
     const checklistPanel = document.getElementById('plan-completion-checklist-panel');
+    const checklistEditorBlock = document.getElementById('plan-checklist-editor-block');
     const requiredHint = document.getElementById('plan-photo-required-hint');
     const openedPlan = appState.plans.find((item) => Number(item.id) === Number(appState.openedPlanId));
 
     if (listSurface) listSurface.hidden = false;
     if (closeBtn) closeBtn.style.display = openedPlan ? 'inline-flex' : 'none';
+    if (checklistEditorBlock) checklistEditorBlock.hidden = !!openedPlan;
 
     if (workflow) workflow.hidden = !openedPlan;
     if (requiredHint) {
